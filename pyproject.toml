@@ -18,13 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
-  "mlx[cpu]==0.32.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "mlx[cpu]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 cuda12 = [
-  "mlx[cuda12]==0.32.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "mlx[cuda12]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 cuda13 = [
-  "mlx[cuda13]==0.32.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "mlx[cuda13]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 dev = [
   "pytest>=8.4,<10",
