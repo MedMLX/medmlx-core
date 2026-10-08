@@ -12,6 +12,7 @@ checkpoints/
 weights/
 *.safetensors
 *.npz
+!tests/fixtures/*.npz
 *.pt
 *.pth
 *.ckpt

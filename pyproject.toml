@@ -26,6 +26,9 @@ cuda12 = [
 cuda13 = [
   "mlx[cuda13]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
+conversion = [
+  "torch>=2.6,<3",
+]
 dev = [
   "pytest>=8.4,<10",
   "ruff>=0.13,<1",
