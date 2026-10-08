@@ -8,7 +8,7 @@ from typing import Any, cast
 from medmlx_core.errors import InvalidInputError, MissingDependencyError
 
 
-def load_torch_checkpoint(path: Path, *, weights_only: bool = False) -> dict[str, Any]:
+def load_torch_checkpoint(path: Path, *, weights_only: bool = True) -> dict[str, Any]:
     """Deserialize source weights on the host; requires Torch, without model execution."""
 
     try:

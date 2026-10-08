@@ -51,7 +51,7 @@ from medmlx_core.runtime import (
 )
 from medmlx_core.upsample import deconv2x_ncdhw, upsample_add_ncdhw
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "MLX_EXTRA",

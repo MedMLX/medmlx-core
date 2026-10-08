@@ -24,8 +24,9 @@ fields, with `macos_version`, `apple_chip`, and `memory_bytes` set to `None`.
 Linux. It rejects an unavailable selected backend. `require_mlx_device()` still
 requires the explicit name `mlx`. There is no automatic backend fallback.
 
-The `conversion` extra supplies Torch for `load_torch_checkpoint()`. Its original
-`weights_only=False` default and error metadata (`extra="models"`) are retained.
+The `conversion` extra supplies Torch for `load_torch_checkpoint()`. Safe
+`weights_only=True` loading is the default. Explicit `weights_only=False` remains
+available for trusted legacy payloads; error metadata retains `extra="models"`.
 MLX stays pinned to `>=0.32.2,<0.33`; Python is `>=3.12,<3.14`.
 
 ## Public API and source mapping

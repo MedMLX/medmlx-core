@@ -65,6 +65,9 @@ def test_snapshot_executable_definitions(name):
     if name == "checkpoints":
         conversion = importlib.import_module("medmlx_core.conversion")
         actual.update(definitions(Path(conversion.__file__).read_text()))
+        # Safe loading now rejects executable pickle by default; the admission
+        # behavior is covered directly in test_checkpoint_loading.py.
+        actual.pop("load_torch_checkpoint", None)
     if name == "runtime":
         # The only intentional behavior change accepts Linux and its configured backend.
         for changed in ("probe_mlx_runtime", "import_mlx", "_linux_backend_available"):

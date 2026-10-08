@@ -2,4 +2,4 @@ import medmlx_core
 
 
 def test_version() -> None:
-    assert medmlx_core.__version__ == "0.1.0"
+    assert medmlx_core.__version__ == "0.1.1"
