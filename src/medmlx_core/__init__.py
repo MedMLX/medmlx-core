@@ -49,6 +49,11 @@ from medmlx_core.runtime import (
     require_mlx_runtime,
     reset_mlx_peak_memory,
 )
+from medmlx_core.sliding_window import (
+    compute_importance_map,
+    dense_patch_slices,
+    sliding_window_inference,
+)
 from medmlx_core.upsample import deconv2x_ncdhw, upsample_add_ncdhw
 
 __version__ = "0.0.0"
@@ -65,12 +70,14 @@ __all__ = [
     "RadnnError",
     "as_fp32",
     "avg_pool3d_ncdhw",
+    "compute_importance_map",
     "concat_channels_ncdhw",
     "conv3d_ncdhw",
     "conv3d_weight_to_mlx",
     "conv_transpose3d_ncdhw",
     "conv_transpose3d_weight_to_mlx",
     "deconv2x_ncdhw",
+    "dense_patch_slices",
     "group_norm_ncdhw",
     "import_mlx",
     "linear",
@@ -85,6 +92,7 @@ __all__ = [
     "require_ncdhw",
     "reset_mlx_peak_memory",
     "silu",
+    "sliding_window_inference",
     "split_conv3d_ncdhw",
     "split_conv_transpose3d_ncdhw",
     "tensor_mapping_from_payload",

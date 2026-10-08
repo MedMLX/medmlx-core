@@ -104,6 +104,152 @@ implementations or replace them with compatibility re-exports. Keep model-specif
 and orchestration imports, including `radnn._shared.json`. Linux support belongs
 to core's host policy; Metal-only functions retain their original limitation.
 
+## Sliding-window inference
+
+MONAI-compatible sliding-window inference with no torch or MONAI at runtime. Algorithms derive from MONAI 1.6.0; see `THIRD_PARTY_NOTICES.md`.
+
+Runtime
+dependencies are only NumPy and MLX. Neither RadNN, Torch, nor MONAI is imported
+by the runtime module. No networks or weight converters are moved by this task;
+their seeded-model and synthetic conversion tests belong to the model extractions.
+No `conversion` extra is needed here.
+
+```python
+from medmlx_core.sliding_window import sliding_window_inference
+
+logits = sliding_window_inference(
+    image,                    ### NumPy or MLX (N, C, *spatial), float32/float16
+    roi_size=(128, 128, 128),
+    sw_batch_size=1,
+    predictor=network,         ### MLX array -> MLX array, same spatial resolution
+    overlap=0.25,
+    mode="constant",
+    padding_mode="replicate",
+)
+```
+
+The result is a host NumPy array with the input dtype and original spatial size;
+output channel count follows the predictor. Public helpers are
+`dense_patch_slices` and `compute_importance_map`. Scalar/per-axis overlap and
+sigma, fallback ROI components, all four Torch padding modes, supplied ROI maps,
+window batching across images, predictor arguments, and `with_coord` are supported.
+`sw_device` accepts an MLX device or `"cpu"`/`"gpu"`; None uses MLX's default.
+`device` is None or `"cpu"` because accumulation stays on the host.
+
+Window stride is `max(int(roi * (1-overlap)), 1)` (ROI-sized when image equals
+ROI), with the last window shifted to the edge and the last spatial axis varying
+fastest. Small images receive symmetric padding, with the extra voxel on the
+right. Gaussian maps use FP32 separable factors centered at `(size-1)/2`, sigma
+`size*sigma_scale`, no peak normalization, and a minimum weight of 0.001.
+Patches are weighted in predictor dtype before ordered input-dtype accumulation;
+the count map is accumulated once per spatial window and used for normalization.
+
+Multiple/scaled outputs, positive `buffer_steps`, `process_fn`, progress bars,
+and MetaTensor metadata are outside this extraction and fail explicitly where
+applicable. `buffer_steps=None`/nonpositive values use unbuffered MONAI semantics.
+NV's bounded rolling label accumulator and interactive correction inferer are
+not replaced by this full-volume logit implementation.
+
+#### Route settings
+
+The three staged `configs/inference.json` settings below were supplied by the
+user; the staged files are absent from the frozen snapshot. Unspecified options
+are MONAI defaults. NV settings were read from frozen RadNN cbaa1ac
+`integrations/nv_segment_ct/mlx_worker.py:78-79,103-105` and `streaming.py:75-117`.
+
+| Route | ROI | Configured batch | Overlap | Blend | Padding |
+| --- | --- | --- | --- | --- | --- |
+| `brats_mri_segmentation` (SegResNet) | 240 × 240 × 160 | 1 | 0.5 | constant | constant |
+| `renalStructures_CECT_segmentation` (SegResNet) | 96³ | 4 | 0.25 | constant | constant |
+| `renalStructures_UNEST_segmentation` (UNesT) | 96³ | 4 | 0.5 | constant | constant |
+| NV automatic / class prompt | 128³ | 1 | 0.25 | constant | replicate |
+
+All use cval 0, sigma .125 (unused for constant blending), and no MONAI
+`buffer_steps`. Frozen `engines/mlx_segresnet/bundle.py:53-55` and
+`integrations/renal_unest/mlx_bundle.py:44-46` override the configured inferer to
+batch size 1 and `sw_device=device=cpu`, with AMP disabled. Both configured
+batch sizes and these overrides are covered by parity tests. The MLX network
+uses its default device independently of these Torch host-device settings.
+
+NV interactive correction calls a separate `point_based_window_inferer`, with
+ROI read from its bundle, `center_only=True`, `transpose=True`, previous logits
+±1, and connected-component combination (`correction_worker.py:92-127`,
+`mlx_point_window.py`). That path does not call ordinary sliding-window inference.
+
+The nnunet-mlx implementation was read for MLX evaluation/host-export patterns;
+its redistributed window steps and peak-normalized Gaussian were not adopted.
+
+#### Sources and what stays in RadNN
+
+No source file is moved wholesale. `src/medmlx_core/sliding_window.py` ports
+MONAI 1.6.0 `monai/inferers/utils.py` window inference and scan intervals, plus
+`monai/data/utils.py` dense windows and importance maps. Independent parity tests
+live in `tests/test_sliding_window.py`.
+
+| Reference source / symbols | Destination | Lines |
+| --- | --- | --- |
+| MONAI `inferers/utils.py`: `sliding_window_inference`, `_get_scan_interval`; `data/utils.py`: `dense_patch_slices`, `compute_importance_map` | `src/medmlx_core/sliding_window.py` | 244 |
+| Real MONAI parity, route settings, padding, maps, coordinates, dtype contracts | `tests/test_sliding_window.py` | 318 |
+| Frozen RadNN `integrations/nv_segment_ct/streaming.py`: `rolling_logits` (reference only) | `scripts/make_reference_fixtures.py` | 95 |
+
+`scripts/make_reference_fixtures.py`
+imports frozen `radnn/integrations/nv_segment_ct/streaming.py:75-184` to record
+small constant/Gaussian score and label fixtures with seeded linear predictors,
+weights, inputs, coordinates, and `radnn_commit=cbaa1ac` metadata. No Apple runtime
+gate monkeypatch is needed: this reference module runs entirely on Torch CPU.
+
+Asset staging, checkpoint loading, readiness, registry, telemetry/run records,
+package inputs, QC, DICOM/NIfTI I/O, transforms, label reduction, and interactive
+connected-component correction stay in RadNN because they are orchestration or
+model-specific operations, not the shared logit stitcher.
+
+#### RadNN integration changes needed (not performed)
+
+1. Import `sliding_window_inference` from `medmlx_core.sliding_window` in a RadNN
+   inferer adapter. Convert its CPU Torch input once with
+   `inputs.detach().cpu().numpy()`, pass the model's MLX callback, then wrap the
+   resulting logits with `torch.from_numpy` for the existing evaluator/transforms.
+2. In SegResNet `bundle.py` and UNesT `mlx_bundle.py`, replace the MONAI inferer
+   target with that RadNN adapter, passing the staged ROI/blending/padding options.
+   Split `BundlePredictor._forward_window` so the MLX callback retains validation,
+   telemetry, evaluation, synchronization, and cache handling but accepts/returns
+   MLX arrays; `UNesTPredictor` inherits that callback. Calling the present Torch
+   `forward` directly as the new predictor would violate the MLX API.
+3. In NV `mlx_worker.py`, replace the `rolling_logits` import/call with this
+   function using the confirmed options above and an MLX-returning measured
+   predictor. Preserve first-index argmax in `class_ids` order and the `max <= 0`
+   background rule before existing postprocessing. This allocates full logits;
+   retain the existing rolling path when its bounded memory behavior is required.
+4. Keep `mlx_point_window.py` and `correction_worker.py` on their point-window
+   path until that separate MONAI connected-component algorithm is extracted.
+   Ordinary sliding-window inference cannot replace that call by changing imports.
+
+#### Validation
+
+Use the supplied environment; no installation or network is needed:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /home/alif/Documents/GitHub/.medmlx-extract/env/bin/python scripts/make_reference_fixtures.py
+PATH=/home/alif/Documents/GitHub/.medmlx-extract/env/bin:$PATH ruff check .
+CORE_SRC=$PWD/src
+PYTHONPATH=src:$CORE_SRC PYTHONDONTWRITEBYTECODE=1 /home/alif/Documents/GitHub/.medmlx-extract/env/bin/python -m pytest -q
+```
+
+Tests use real MONAI 1.6.0 and Torch CPU, not mocks. Constant reference cases,
+padding, coordinates, and mixed-dtype cases assert bitwise equality. Gaussian
+FP32 outputs assert maximum absolute difference <= 1e-6; direct maps <= 1e-7.
+NumPy/Torch exponential kernels can round differently; supplying an identical
+Gaussian map gives bitwise equality in the coordinate-dependent test. The
+formerly failing test inadvertently inferred FP64 Torch offsets from MONAI's
+NumPy-integer coordinates, while its MLX predictor used FP32. The resulting
+FP64 weighting before FP32 accumulation caused the 5.96e-8 residual. Specifying
+`dtype=patch.dtype` fixes the reference predictor; accumulation and normalization
+are bitwise identical without changing runtime math. The fixtures' discrete
+label maps match bitwise. Each route has odd overlapping and padded cases with
+ROI scaled by 1/16, plus a cheap predictor run at its actual full ROI dimensions.
+Apple GPU performance, production-volume memory use, and full model integration
+are pending; only the supplied Linux MLX CPU backend is exercised here.
+
 ## License
 
 Proprietary until release review.
