@@ -250,6 +250,36 @@ ROI scaled by 1/16, plus a cheap predictor run at its actual full ROI dimensions
 Apple GPU performance, production-volume memory use, and full model integration
 are pending; only the supplied Linux MLX CPU backend is exercised here.
 
+## Channel-last released-network layers
+
+`medmlx_core.channel_last.ChannelLastGraph` supplies shared FP32 channel-last
+convolution, projection, normalization, activation, bilinear interpolation and
+3D transpose-convolution primitives for `swin-unetr-mlx`, `hovernet-mlx` and
+`flexible-unet-mlx`. Model topology and checkpoint specifications stay in those
+packages. Import this module directly; importing core still does not load MLX.
+
+The arithmetic is extracted from the qualified October 7, 2026 uncommitted
+RadNN `radnn/engines/mlx_monai/ops.py` working source. Only the import of the
+existing transpose-convolution owner and the class name change. Its source
+SHA-256 is recorded in `tests/fixtures/channel_last.npz`. Two independent
+pre-extraction fixtures cover grouped 2D convolution, BatchNorm epsilon,
+LayerNorm, Swish, source-aligned bilinear interpolation, 3D transpose convolution
+and InstanceNorm. Both match bitwise on M1 Max Metal with MLX 0.32.2. The three
+standalone released-checkpoint packages separately exercise this helper against
+original MONAI 1.4.0 CPU outputs.
+
+```bash
+PYTHONPATH=src pytest -q tests/test_channel_last.py
+python scripts/make_channel_last_fixtures.py --radnn-root /path/to/qualified/radnn \
+  --output /path/to/fresh-fixture.npz
+```
+
+The existing full suite's older MLX 0.32.3 Linux CPU fixtures have 23 bitwise
+failures on this MLX 0.32.2 Metal host. The same 23 failures reproduce on unchanged
+core main `17ff628`; no tolerance or existing fixture was changed. Full core
+cross-backend qualification remains open. These failures are separate from the
+new helper's two passing Metal fixtures and the standalone network-window gates.
+
 ## License
 
 Proprietary until release review.
