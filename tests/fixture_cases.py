@@ -1,62 +1,143 @@
-"""Fixed inputs and call recipes; expected values come only from RadNN fixtures."""
+"""Canonical seeded cases and versioned upstream-reference fixture boundary."""
 
 from __future__ import annotations
 
-import ast
-import os
-import platform
+import json
 from collections.abc import Callable
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 
-SNAPSHOT = Path(
-    os.environ.get(
-        "MEDMLX_RADNN_SNAPSHOT", "/home/alif/Documents/GitHub/.medmlx-extract/radnn-cbaa1ac"
-    )
-)
-# Bitwise outputs differ across backends by float32 rounding, so each backend has its
-# own snapshot recording. The original Linux CPU recording sits at the fixture root.
-REFERENCE_BACKEND = "linux-x86_64-cpu"
+RECORDING_PLATFORM = "darwin-arm64"
+FIXTURES = Path(__file__).parent / "fixtures" / RECORDING_PLATFORM
 
 
-def backend_key(mx: Any) -> str:
-    return f"{platform.system().lower()}-{platform.machine()}-{mx.default_device().type.name}"
+@dataclass(frozen=True, slots=True)
+class ArrayCase:
+    id: str
+    function: str
+    args: tuple[str | None, ...]
+    kwargs: tuple[tuple[str, Any], ...]
+    error: type[Exception] | None = None
+    error_message: str | None = None
 
 
-SOURCES = {
-    "runtime": "radnn/runtime/mlx.py",
-    "precision": "radnn/runtime/mlx_precision.py",
-    "checkpoints": "radnn/runtime/checkpoints.py",
-    "layout": "radnn/integrations/nv_generate/mlx/layout.py",
-    "ops": "radnn/integrations/nv_generate/mlx/ops.py",
-    "upsample": "radnn/engines/mlx_segresnet/upsample.py",
-    "errors": "radnn/errors.py",
-}
+@dataclass(frozen=True, slots=True)
+class ReferenceSpec:
+    schema_version: int
+    monai_version: str
+    monai_revision: str
+    torch_version: str
+    torch_revision: str
 
-
-def definitions(source: str) -> dict[str, str]:
-    """Compare executable definitions, ignoring docstrings and import relocation."""
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef)
-            and node.body
-            and isinstance(node.body[0], ast.Expr)
+    def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or self.schema_version != 1:
+            raise ValueError(f"Unsupported reference schema: {self.schema_version}")
+        if any(
+            not isinstance(value, str) or not value
+            for value in (self.monai_version, self.torch_version)
         ):
-            value = node.body[0].value
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                node.body.pop(0)
-    return {
-        node.name: ast.dump(node, include_attributes=False)
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef | ast.ClassDef)
-    }
+            raise ValueError("Reference versions must be explicit strings")
+        for revision in (self.monai_revision, self.torch_revision):
+            if (
+                not isinstance(revision, str)
+                or len(revision) != 40
+                or any(character not in "0123456789abcdef" for character in revision)
+            ):
+                raise ValueError(f"Invalid upstream revision: {revision}")
+
+    @classmethod
+    def from_json(cls, value: str) -> ReferenceSpec:
+        payload = json.loads(value)
+        if not isinstance(payload, dict) or payload.keys() != {field.name for field in fields(cls)}:
+            raise ValueError("Reference spec must contain exactly the declared fields")
+        return cls(**payload)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
 
 
-def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]]]:
+@dataclass(frozen=True, slots=True)
+class RecordedCase:
+    id: str
+    outputs: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureMetadata:
+    upstream: ReferenceSpec
+    platform: str
+    seed: int
+    cases: tuple[RecordedCase, ...]
+    reference_device: str
+    numpy_version: str
+    torch_build: str
+    mode: str | None
+
+    @classmethod
+    def from_json(cls, value: str) -> FixtureMetadata:
+        payload = json.loads(value)
+        if (
+            not isinstance(payload, dict)
+            or type(payload.get("schema_version")) is not int
+            or payload["schema_version"] != 2
+        ):
+            raise ValueError("Invalid fixture schema")
+        recording_platform, seed = payload.get("platform"), payload.get("seed")
+        if recording_platform != RECORDING_PLATFORM or type(seed) is not int:
+            raise ValueError("Fixture must be recorded on darwin-arm64 with an explicit seed")
+        upstream = ReferenceSpec.from_json(json.dumps(payload.get("upstream")))
+        recorded = payload.get("cases", [])
+        if not isinstance(recorded, list):
+            raise ValueError("Fixture cases must be a list")
+        provenance = tuple(
+            payload.get(key) for key in ("reference_device", "numpy_version", "torch_build")
+        )
+        if any(not isinstance(value, str) or not value for value in provenance):
+            raise ValueError("Fixture must declare its reference device and framework builds")
+        mode = payload.get("mode")
+        if mode not in (None, "constant", "gaussian"):
+            raise ValueError("Invalid fixture blend mode")
+        cases = []
+        for case in recorded:
+            if not isinstance(case, dict) or not isinstance(case.get("id"), str):
+                raise ValueError("Fixture case must have an id")
+            outputs = case.get("outputs")
+            if not isinstance(outputs, list) or any(not isinstance(key, str) for key in outputs):
+                raise ValueError("Fixture outputs must be array keys")
+            cases.append(RecordedCase(case["id"], tuple(outputs)))
+        if len({case.id for case in cases}) != len(cases):
+            raise ValueError("Fixture case ids must be unique")
+        return cls(upstream, recording_platform, seed, tuple(cases), *provenance, mode)
+
+    def to_json(self) -> str:
+        payload = {"schema_version": 2, **asdict(self)}
+        if self.mode is None:
+            payload.pop("mode")
+        return json.dumps(payload)
+
+
+REFERENCE = ReferenceSpec.from_json((Path(__file__).parent / "reference_spec.json").read_text())
+
+
+def load_fixture(name: str) -> tuple[FixtureMetadata, dict[str, np.ndarray]]:
+    path = FIXTURES / f"{name}.npz"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Missing upstream reference: {path}; run the README fixture commands"
+        )
+    with np.load(path, allow_pickle=False) as archive:
+        metadata = FixtureMetadata.from_json(str(archive["metadata"]))
+        arrays = {key: archive[key] for key in archive.files if key != "metadata"}
+    if metadata.upstream != REFERENCE:
+        raise ValueError(f"Fixture does not match the pinned upstream source: {path}")
+    return metadata, arrays
+
+
+def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[ArrayCase]]]:
     rng = np.random.default_rng(7081)
 
     def random(shape: tuple[int, ...]) -> np.ndarray:
@@ -77,26 +158,77 @@ def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]
         "skip": random((1, 2, 2, 4, 6)),
         "half": random((1, 2, 1, 2, 3)).astype(np.float16),
     }
-    cases: dict[str, list[dict[str, Any]]] = {}
+    cases: dict[str, list[ArrayCase]] = {}
 
-    def add(module: str, function: str, args: list[str | None], **kwargs: Any) -> None:
+    def add(
+        module: str,
+        function: str,
+        args: list[str | None],
+        *,
+        error: type[Exception] | None = None,
+        error_message: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         items = cases.setdefault(module, [])
         items.append(
-            {"id": f"{function}_{len(items)}", "function": function, "args": args, "kwargs": kwargs}
+            ArrayCase(
+                f"{function}_{len(items)}",
+                function,
+                tuple(args),
+                tuple(kwargs.items()),
+                error,
+                error_message,
+            )
         )
 
+    _add_layout_cases(add, arrays, random)
+    _add_basic_cases(add)
+    _add_split_cases(add)
+    _add_resize_cases(add)
+    _add_decoder_cases(add)
+    _add_precision_cases(add, arrays, random)
+    return arrays, cases
+
+
+def _add_layout_cases(
+    add: Callable[..., None],
+    arrays: dict[str, np.ndarray],
+    random: Callable[[tuple[int, ...]], np.ndarray],
+) -> None:
     add("layout", "require_ncdhw", ["x"], name="input")
-    add("layout", "require_ncdhw", ["bad_rank"], name="input")
+    add(
+        "layout",
+        "require_ncdhw",
+        ["bad_rank"],
+        name="input",
+        error=ValueError,
+        error_message="input must be NCDHW rank-5; got ndim=2",
+    )
     add("layout", "to_ndhwc", ["x"])
     add("layout", "to_ncdhw", ["x"])
     add("layout", "conv3d_weight_to_mlx", ["w"])
     add("layout", "conv_transpose3d_weight_to_mlx", ["wt"])
-    add("layout", "conv3d_weight_to_mlx", ["bad_rank"])
-    add("layout", "conv_transpose3d_weight_to_mlx", ["bad_rank"])
+    add(
+        "layout",
+        "conv3d_weight_to_mlx",
+        ["bad_rank"],
+        error=ValueError,
+        error_message="conv3d weight must be rank-5 [O,I,K]; got ndim=2",
+    )
+    add(
+        "layout",
+        "conv_transpose3d_weight_to_mlx",
+        ["bad_rank"],
+        error=ValueError,
+        error_message="conv_transpose3d weight must be rank-5 [I,O,K]; got ndim=2",
+    )
     add("layout", "tokens_from_ncdhw", ["x"])
     # Use a fixed independently stored tokens input for the inverse mapping.
     arrays["tokens"] = random((1, 192, 2))
     add("layout", "tokens_to_ncdhw", ["tokens"], spatial=[1, 2, 8, 6, 4])
+
+
+def _add_basic_cases(add: Callable[..., None]) -> None:
     add("ops", "as_fp32", ["half"])
     add("ops", "silu", ["x"])
     for bias in ("bias", None):
@@ -118,7 +250,14 @@ def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]
             ["x", "norm_weight", "norm_bias"],
             num_groups=groups,
             eps=1e-5,
+            error=ValueError if groups == 3 else None,
+            error_message="group_norm channels 2 must be divisible by num_groups 3"
+            if groups == 3
+            else None,
         )
+
+
+def _add_split_cases(add: Callable[..., None]) -> None:
     for dim in (0, 1, 2):
         add("ops", "split_conv3d_ncdhw", ["x", "w", "bias"], padding=1, num_splits=2, dim_split=dim)
         add(
@@ -142,43 +281,123 @@ def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, Any]]
         num_splits=2,
         dim_split=0,
     )
-    add("ops", "split_conv3d_ncdhw", ["x", "w", None], padding=1, num_splits=2, dim_split=3)
-    add("ops", "split_conv3d_ncdhw", ["x", "w", None], padding=1, num_splits=20, dim_split=0)
+    add(
+        "ops",
+        "split_conv3d_ncdhw",
+        ["x", "w", None],
+        padding=1,
+        num_splits=2,
+        dim_split=3,
+        error=ValueError,
+        error_message="dim_split must be 0, 1, or 2; got 3",
+    )
+    add(
+        "ops",
+        "split_conv3d_ncdhw",
+        ["x", "w", None],
+        padding=1,
+        num_splits=20,
+        dim_split=0,
+        error=ValueError,
+        error_message="split_conv3d length 8 is smaller than num_splits 20",
+    )
+
+
+def _add_resize_cases(add: Callable[..., None]) -> None:
     add("ops", "avg_pool3d_ncdhw", ["x"])
     add("ops", "avg_pool3d_ncdhw", ["x"], kernel_size=3, stride=1)
     for scale in (1, 2, 0):
-        add("ops", "upsample_nearest_ncdhw", ["small"], scale=scale)
+        add(
+            "ops",
+            "upsample_nearest_ncdhw",
+            ["small"],
+            scale=scale,
+            error=ValueError if scale == 0 else None,
+            error_message="upsample scale must be >= 1; got 0" if scale == 0 else None,
+        )
     add("ops", "upsample_trilinear_ncdhw", ["small"])
     add("ops", "pad_spatial_trailing_ncdhw", ["small"])
     add("ops", "concat_channels_ncdhw", ["x", "x"])
-    add("upsample", "deconv2x_ncdhw", ["half", "wd", None])
-    add("upsample", "deconv2x_ncdhw", ["small", "bad_rank", None])
-    add("upsample", "deconv2x_ncdhw", ["small", "w", None])
-    add("upsample", "deconv2x_ncdhw", ["small", "wd", "norm_bias"])
+
+
+def _add_decoder_cases(add: Callable[..., None]) -> None:
+    add(
+        "upsample",
+        "deconv2x_ncdhw",
+        ["half", "wd", None],
+        error=TypeError,
+        error_message="SegResNet decoder deconvolution requires float32 inputs",
+    )
+    add(
+        "upsample",
+        "deconv2x_ncdhw",
+        ["small", "bad_rank", None],
+        error=ValueError,
+        error_message="SegResNet decoder deconvolution weight must be rank 5",
+    )
+    add(
+        "upsample",
+        "deconv2x_ncdhw",
+        ["small", "w", None],
+        error=ValueError,
+        error_message=(
+            "SegResNet decoder deconvolution weight has shape (3, 2, 3, 3, 3); "
+            "expected (2, 2, 2, 2, 2)"
+        ),
+    )
+    add(
+        "upsample",
+        "deconv2x_ncdhw",
+        ["small", "wd", "norm_bias"],
+        error=ValueError,
+        error_message="SegResNet decoder deconvolution bias must have shape (3,) and dtype float32",
+    )
     add("upsample", "upsample_add_ncdhw", ["small", "skip"])
-    add("upsample", "upsample_add_ncdhw", ["half", "skip"])
-    add("upsample", "upsample_add_ncdhw", ["small", "x"])
+    add(
+        "upsample",
+        "upsample_add_ncdhw",
+        ["half", "skip"],
+        error=TypeError,
+        error_message="SegResNet decoder fusion requires float32 inputs",
+    )
+    add(
+        "upsample",
+        "upsample_add_ncdhw",
+        ["small", "x"],
+        error=ValueError,
+        error_message="Decoder skip shape (1, 2, 8, 6, 4) must equal (1, 2, 2, 4, 6)",
+    )
+
+
+def _add_precision_cases(
+    add: Callable[..., None],
+    arrays: dict[str, np.ndarray],
+    random: Callable[[tuple[int, ...]], np.ndarray],
+) -> None:
     add("precision", "eps", [])
     add("precision", "conv", ["small", "w", "bias"], padding=1, stride=1)
     add("precision", "conv", ["small", "w", None], padding=[1, 1, 1], stride=[1, 1, 1])
     add("precision", "_moments", ["x"])
     add("precision", "norm", ["x", "norm_weight", "norm_bias"])
-    return arrays, cases
+    for length in (3, 4, 64, 68, 132, 260):
+        key = f"moments_{length}"
+        arrays[key] = random((1, 2, 1, 1, length))
+        add("precision", "_moments", [key])
 
 
-def run_array_case(module: Any, case: dict[str, Any], arrays: Any, mx: Any) -> Any:
-    args = [None if key is None else mx.array(arrays[key]) for key in case["args"]]
-    kwargs = dict(case["kwargs"])
+def run_array_case(module: Any, case: ArrayCase, arrays: Any, mx: Any) -> Any:
+    args = [None if key is None else mx.array(arrays[key]) for key in case.args]
+    kwargs = dict(case.kwargs)
     if "spatial" in kwargs:
         kwargs["spatial"] = tuple(kwargs["spatial"])
     if hasattr(module, "Float32Operators"):
         instance = module.Float32Operators(mx, groups=1, eps=1e-5)
-        if case["function"] == "eps":
+        if case.function == "eps":
             return instance.eps
-        return getattr(instance, case["function"])(*args, **kwargs)
-    if case["function"] != "require_ncdhw":
+        return getattr(instance, case.function)(*args, **kwargs)
+    if case.function != "require_ncdhw":
         kwargs["mx"] = mx
-    return getattr(module, case["function"])(*args, **kwargs)
+    return getattr(module, case.function)(*args, **kwargs)
 
 
 def outcome(call: Callable[[], Any], mx: Any | None = None) -> dict[str, Any]:
@@ -217,29 +436,6 @@ def peak_cases(module: Any) -> list[dict[str, Any]]:
     return results
 
 
-def error_contracts(module: Any) -> dict[str, Any]:
-    errors = {
-        "RadnnError": module.RadnnError("message", "detail"),
-        "InvalidInputError": module.InvalidInputError("bad input"),
-        "MissingDependencyError": module.MissingDependencyError(
-            "dependency missing", extra="conversion", hint="install conversion"
-        ),
-        "ModelExecutionError": module.ModelExecutionError("execution failed"),
-        "AssetNotReadyError": module.AssetNotReadyError(
-            "asset absent", reason="missing weights", hint="stage weights"
-        ),
-    }
-    return {
-        name: {
-            "str": str(exc),
-            "args": list(exc.args),
-            "attributes": vars(exc),
-            "mro": [base.__name__ for base in type(exc).__mro__],
-        }
-        for name, exc in errors.items()
-    }
-
-
 def darwin_contracts(module: Any) -> dict[str, Any]:
     """Only platform/sysctl/backend boundaries are simulated, never readiness gates."""
     from unittest.mock import patch
@@ -273,7 +469,7 @@ def darwin_contracts(module: Any) -> dict[str, Any]:
         invalid = outcome(lambda: module.require_mlx_device("cpu"))
         backend.metal.is_available = lambda: False
         missing_metal = module.probe_mlx_runtime().to_payload()
-        missing_metal.pop("hint")  # installation hint is part of the platform policy change
+        missing_metal.pop("hint")
         rejected = outcome(module.require_mlx_runtime)
         return {
             "probe": report,

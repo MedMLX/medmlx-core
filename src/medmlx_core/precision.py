@@ -194,7 +194,7 @@ class Float32Operators:
         self.eps = mx.array([high, eps - high], dtype=mx.float32)
         self.kernels = {
             name: mx.fast.metal_kernel(
-                name=f"radnn_float32_packed_{namespace}_{name}",
+                name=f"medmlx_float32_packed_{namespace}_{name}",
                 input_names=inputs,
                 output_names=outputs,
                 source=source,

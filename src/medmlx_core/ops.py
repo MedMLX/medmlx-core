@@ -16,7 +16,7 @@ from medmlx_core.layout import (
 
 
 def as_fp32(array: Any, mx: Any) -> Any:
-    """Copy a host or device array onto the MLX GPU as float32."""
+    """Copy a host or device array onto the selected MLX backend as float32."""
 
     return mx.array(array, dtype=mx.float32)
 

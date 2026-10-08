@@ -1,10 +1,9 @@
 """Independent MONAI 1.6.0 references for placement, padding, and FP32 blending."""
 
-from pathlib import Path
-
 import mlx.core as mx
 import numpy as np
 import pytest
+from fixture_cases import load_fixture
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("monai")
@@ -22,13 +21,12 @@ from medmlx_core.sliding_window import (  # noqa: E402
     sliding_window_inference,
 )
 
-# Staged bundle settings supplied with this extraction; unspecified options
-# retain MONAI 1.6.0 defaults. NV settings come from mlx_worker/streaming.py.
-ROUTE_SETTINGS = [
-    pytest.param((240, 240, 160), 1, 0.5, "constant", id="brats_segresnet"),
-    pytest.param((96, 96, 96), 4, 0.25, "constant", id="renal_cect_segresnet"),
-    pytest.param((96, 96, 96), 4, 0.5, "constant", id="renal_unest"),
-    pytest.param((128, 128, 128), 1, 0.25, "replicate", id="nv_segment_ct"),
+# Representative ROI/batch combinations; each is compared directly with MONAI.
+WINDOW_SETTINGS = [
+    pytest.param((240, 240, 160), 1, 0.5, "constant", id="large_anisotropic"),
+    pytest.param((96, 96, 96), 4, 0.25, "constant", id="batch4_quarter"),
+    pytest.param((96, 96, 96), 4, 0.5, "constant", id="batch4_half"),
+    pytest.param((128, 128, 128), 1, 0.25, "replicate", id="replicate"),
 ]
 
 
@@ -130,9 +128,9 @@ def test_importance_map_matches_monai_center_clamp_and_dtype(patch, scale, mode)
     assert np.array_equal(compute_importance_map(patch, mode, scale, np.float16), expected_half)
 
 
-@pytest.mark.parametrize("full_roi,sw_batch_size,overlap,padding_mode", ROUTE_SETTINGS)
+@pytest.mark.parametrize("full_roi,sw_batch_size,overlap,padding_mode", WINDOW_SETTINGS)
 @pytest.mark.parametrize("smaller_than_roi", [False, True], ids=["odd_overlap", "padding"])
-def test_scaled_route_settings_match_monai(
+def test_scaled_window_settings_match_monai(
     full_roi, sw_batch_size, overlap, padding_mode, smaller_than_roi
 ):
     roi = tuple(size // 16 for size in full_roi)
@@ -144,7 +142,6 @@ def test_scaled_route_settings_match_monai(
         sigma_scale=0.125,
         padding_mode=padding_mode,
         cval=0,
-        sw_device="cpu",
         device="cpu",
         buffer_steps=None,
     )
@@ -155,8 +152,8 @@ def test_scaled_route_settings_match_monai(
     assert_parity(actual, expected, exact=True)
 
 
-@pytest.mark.parametrize("roi,sw_batch_size,overlap,padding_mode", ROUTE_SETTINGS)
-def test_full_roi_route_settings_match_monai(roi, sw_batch_size, overlap, padding_mode):
+@pytest.mark.parametrize("roi,sw_batch_size,overlap,padding_mode", WINDOW_SETTINGS)
+def test_full_roi_window_settings_match_monai(roi, sw_batch_size, overlap, padding_mode):
     # Exercise the real patch dimensions and padding without a costly network.
     shape = tuple(size - 1 for size in roi)
     inputs = np.random.default_rng(704).integers(-32, 33, (1, 1, *shape), dtype=np.int8)
@@ -172,7 +169,7 @@ def test_full_roi_route_settings_match_monai(roi, sw_batch_size, overlap, paddin
         mx.eval(result)
         return result + 0.125
 
-    options = dict(overlap=overlap, padding_mode=padding_mode, device="cpu", sw_device="cpu")
+    options = dict(overlap=overlap, padding_mode=padding_mode, device="cpu")
     expected = monai_inference(
         torch.from_numpy(inputs), roi, sw_batch_size, predict_torch, **options
     ).numpy()
@@ -180,12 +177,11 @@ def test_full_roi_route_settings_match_monai(roi, sw_batch_size, overlap, paddin
     assert_parity(actual, expected, exact=True)
 
 
-@pytest.mark.parametrize("overlap", [0.25, 0.5], ids=["renal_cect", "renal_unest"])
-def test_radnn_cpu_batch_override_matches_monai(overlap):
-    # Both frozen bundle adapters override configured batch size 4 to 1.
+@pytest.mark.parametrize("overlap", [0.25, 0.5], ids=["quarter", "half"])
+def test_single_window_batch_matches_monai(overlap):
     inputs = np.random.default_rng(705).integers(-32, 33, (1, 1, 13, 11, 5))
     inputs = inputs.astype(np.float32) / 32
-    options = dict(overlap=overlap, device="cpu", sw_device="cpu")
+    options = dict(overlap=overlap, device="cpu")
     expected = monai_inference(torch.from_numpy(inputs), (6, 6, 6), 1, torch_predict, **options)
     actual = sliding_window_inference(inputs, (6, 6, 6), 1, mlx_predict, **options)
     assert_parity(actual, expected.numpy(), exact=True)
@@ -231,7 +227,6 @@ def test_cached_gaussian_map_and_coordinate_predictor_are_bitwise_equal():
         **options,
         scale=0.5,
         bias=0.125,
-        sw_device="cpu",
         device="cpu",
     )
     assert actual_coords == expected_coords
@@ -268,25 +263,32 @@ def test_scalar_and_fallback_roi_match_monai(roi):
 
 
 @pytest.mark.parametrize("mode", ["constant", "gaussian"])
-def test_frozen_radnn_rolling_scores_and_labels(mode):
-    with np.load(Path(__file__).parent / "fixtures" / f"radnn_rolling_{mode}.npz") as reference:
-        assert reference["radnn_commit"].item() == "cbaa1ac"
-        inputs, weights, bias = reference["inputs"], reference["weights"], reference["bias"]
+def test_recorded_monai_scores_coordinates_and_labels(mode):
+    _, reference = load_fixture(f"sliding_window_{mode}")
+    inputs, weights, bias = reference["inputs"], reference["weights"], reference["bias"]
+    coordinates = []
 
-        def predict(patch):
-            # The fixture predictor is NumPy arithmetic exported to MLX by
-            # RadNN's real rolling module; no model/weight converter is moved.
-            host = np.asarray(patch)
-            return mx.array(host * weights + bias)
+    def predict(patch, coords):
+        coordinates.extend([[int(s.start) for s in coord[2:]] for coord in coords])
+        result = patch * mx.array(weights)
+        mx.eval(result)  # Torch's eager multiplication precedes addition.
+        return result + mx.array(bias)
 
-        actual = sliding_window_inference(
-            inputs, tuple(reference["roi_size"]), 1, predict, mode=mode, padding_mode="replicate"
-        )
-        assert_parity(actual, reference["scores"], exact=mode == "constant")
-        ids = reference["class_ids"]
-        labels = ids[np.argmax(actual, axis=1)]
-        labels[np.max(actual, axis=1) <= 0] = 0
-        assert np.array_equal(labels[:, None], reference["labels"])
+    actual = sliding_window_inference(
+        inputs,
+        tuple(reference["roi_size"]),
+        1,
+        predict,
+        mode=mode,
+        padding_mode="replicate",
+        with_coord=True,
+    )
+    assert_parity(actual, reference["scores"], exact=mode == "constant")
+    np.testing.assert_array_equal(coordinates, reference["coordinates"])
+    # MONAI AsDiscrete(argmax=True): channel indices, with first-index ties.
+    # Background thresholds and external class-id remaps belong to model packages.
+    labels = np.argmax(actual, axis=1)[:, None].astype(np.uint8)
+    np.testing.assert_array_equal(labels, reference["labels"])
 
 
 @pytest.mark.parametrize(
@@ -295,6 +297,9 @@ def test_frozen_radnn_rolling_scores_and_labels(mode):
         ({"overlap": 1}, ValueError, "overlap must"),
         ({"buffer_steps": 2}, NotImplementedError, "buffer_steps"),
         ({"device": "gpu"}, ValueError, "device must"),
+        ({"sw_device": "cpu"}, ValueError, "sw_device must"),
+        ({"sw_device": mx.cpu}, ValueError, "sw_device must"),
+        ({"sw_device": mx.Device(mx.cpu)}, ValueError, "sw_device must"),
     ],
 )
 def test_invalid_or_unimplemented_options_fail_before_prediction(options, error, message):

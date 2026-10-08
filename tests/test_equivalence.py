@@ -1,81 +1,42 @@
-"""RadNN golden outputs and preserved executable definitions from cbaa1ac."""
+"""Independent upstream outputs for shared helpers, without reference frameworks at runtime."""
 
 import importlib
-import json
-from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
 import pytest
-from fixture_cases import REFERENCE_BACKEND, backend_key, definitions, outcome, run_array_case
+from fixture_cases import array_cases, load_fixture, run_array_case
+from numerical import assert_reference, helper_budget
 
-FIXTURES = Path(__file__).parent / "fixtures"
-BACKEND = backend_key(mx)
-BACKEND_FIXTURES = FIXTURES if BACKEND == REFERENCE_BACKEND else FIXTURES / BACKEND
-
-
-def load_fixture(name, *, backend=False):
-    root = BACKEND_FIXTURES if backend else FIXTURES
-    with np.load(root / f"{name}.npz", allow_pickle=False) as archive:
-        arrays = {key: archive[key] for key in archive.files if key != "metadata"}
-        metadata = json.loads(str(archive["metadata"]))
-    assert metadata["radnn_commit"] == "cbaa1ac"
-    return metadata, arrays
-
-
+_, CASES = array_cases()
 ARRAY_CASES = [
-    (module, case)
-    for module in ("layout", "ops", "upsample", "precision")
-    for case in load_fixture(module)[0]["cases"]
+    (name, case)
+    for name, cases in CASES.items()
+    for case in cases
+    if case.error is None or case.function == "group_norm_ncdhw"
 ]
 
 
 @pytest.mark.parametrize(
-    ("name", "case"), ARRAY_CASES, ids=[f"{name}.{case['id']}" for name, case in ARRAY_CASES]
+    ("name", "case"), ARRAY_CASES, ids=[f"{name}.{case.id}" for name, case in ARRAY_CASES]
 )
-def test_snapshot_outputs(name, case):
-    if not (BACKEND_FIXTURES / f"{name}.npz").exists():
-        pytest.skip(f"No RadNN snapshot recording for {BACKEND}")
-    metadata, arrays = load_fixture(name, backend=True)
-    case = next(recorded for recorded in metadata["cases"] if recorded["id"] == case["id"])
+def test_upstream_outputs(name, case):
+    metadata, arrays = load_fixture(name)
     module = importlib.import_module(f"medmlx_core.{name}")
-    actual = outcome(lambda: run_array_case(module, case, arrays, mx), mx)
-    values = actual.pop("arrays", [])
-    expected = case["expected"]
-    # These kernels require Metal. CPU fixtures record RadNN's real backend failure,
-    # not emulated output. Their exact kernel sources are compared separately below.
-    if expected.get("message") == "[metal_kernel] No Metal back-end." and mx.metal.is_available():
-        pytest.skip("Regenerate numerical Metal fixtures on Apple Silicon")
-    assert actual == expected, f"{name}.{case['id']}: return/error contract changed"
-    assert len(values) == len(case["outputs"])
-    for actual_array, key in zip(values, case["outputs"], strict=True):
-        expected_array = arrays[key]
-        assert actual_array.dtype == expected_array.dtype, key
-        assert actual_array.shape == expected_array.shape, key
-        assert np.array_equal(actual_array, expected_array), f"{name}.{key}: numerical drift"
-
-
-@pytest.mark.parametrize(
-    "name", ["layout", "ops", "upsample", "precision", "checkpoints", "errors", "runtime"]
-)
-def test_snapshot_executable_definitions(name):
-    metadata, _ = load_fixture(name)
-    module = importlib.import_module(f"medmlx_core.{name}")
-    actual = definitions(Path(module.__file__).read_text())
-    if name == "checkpoints":
-        conversion = importlib.import_module("medmlx_core.conversion")
-        actual.update(definitions(Path(conversion.__file__).read_text()))
-        # Safe loading now rejects executable pickle by default; the admission
-        # behavior is covered directly in test_checkpoint_loading.py.
-        actual.pop("load_torch_checkpoint", None)
-    if name == "runtime":
-        # The only intentional behavior change accepts Linux and its configured backend.
-        for changed in ("probe_mlx_runtime", "import_mlx", "_linux_backend_available"):
-            actual.pop(changed, None)
-    for key, definition in actual.items():
-        assert definition == metadata["definitions"][key], f"{name}.{key}: implementation drift"
-    for key, expected in metadata.get("constants", {}).items():
-        value = getattr(module, key)
-        if isinstance(value, frozenset):
-            value = sorted(value)
-        assert json.loads(json.dumps(value)) == expected, f"{name}.{key}: kernel/layout drift"
+    if case.error is not None:
+        with pytest.raises(case.error) as captured:
+            run_array_case(module, case, arrays, mx)
+        assert str(captured.value) == case.error_message
+        return
+    record = next(record for record in metadata.cases if record.id == case.id)
+    value = run_array_case(module, case, arrays, mx)
+    if value is None:
+        assert record.outputs == ()
+        return
+    mx.eval(value)
+    values = value if isinstance(value, tuple) else (value,)
+    assert len(values) == len(record.outputs)
+    for actual, key in zip(values, record.outputs, strict=True):
+        assert_reference(np.asarray(actual), arrays[key], budget=helper_budget(name, case.function))
+        if case.function == "_moments" and key == record.outputs[1]:
+            assert (np.asarray(actual) >= 0).all(), "Population variance must be nonnegative"

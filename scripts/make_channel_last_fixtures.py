@@ -1,29 +1,17 @@
-"""Capture independent channel-last graph outputs from a qualified RadNN source tree."""
+#!/usr/bin/env python3
+"""Record channel-last primitives and residual blocks from pinned MONAI/PyTorch."""
 
-import argparse
-import hashlib
-import importlib.util
-import json
-import sys
-from importlib.metadata import version
-from pathlib import Path
+from __future__ import annotations
 
-import mlx.core as mx
 import numpy as np
+import torch
+from monai.networks.blocks import UnetResBlock
+from monai.networks.blocks.activation import Swish
+from reference_support import output_directory, save_fixture
+from torch.nn import functional as F
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--radnn-root", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    if args.output.exists():
-        raise FileExistsError(args.output)
-    sys.path.insert(0, str(args.radnn_root))
-    source = args.radnn_root / "radnn/engines/mlx_monai/ops.py"
-    spec = importlib.util.spec_from_file_location("original_monai_graph", source)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def seeded_arrays() -> tuple[np.random.Generator, dict[str, np.ndarray]]:
     rng = np.random.default_rng(20261007)
     arrays = {
         "input_2d": rng.normal(size=(1, 5, 7, 4)).astype(np.float32),
@@ -36,30 +24,79 @@ def main():
         "input_3d": rng.normal(size=(1, 3, 4, 5, 2)).astype(np.float32),
         "deconv.weight": rng.normal(size=(2, 3, 2, 2, 2)).astype(np.float32),
     }
-    graph = module.Graph(
-        {key: mx.array(value) for key, value in arrays.items() if not key.startswith("input_")},
-        mx=mx,
+    return rng, arrays
+
+
+def record_layers(arrays: dict[str, np.ndarray]) -> None:
+    tensors = {key: torch.from_numpy(value) for key, value in arrays.items()}
+    x = tensors["input_2d"].permute(0, 3, 1, 2)
+    x = F.conv2d(x, tensors["conv.weight"], tensors["conv.bias"], padding=1, groups=2)
+    arrays["expected_conv"] = x.permute(0, 2, 3, 1).numpy()
+    x = F.batch_norm(
+        x,
+        tensors["bn.running_mean"],
+        tensors["bn.running_var"],
+        tensors["bn.weight"],
+        tensors["bn.bias"],
+        training=False,
+        eps=1e-3,
     )
-    y = graph.conv(mx.array(arrays["input_2d"]), "conv", padding=1, groups=2)
-    y = graph.swish(graph.batch_norm(y, "bn", eps=1e-3))
-    y = graph.bilinear2x(graph.layer_norm(y))
-    z = graph.instance_norm(graph.deconv3d(mx.array(arrays["input_3d"]), "deconv"))
-    mx.eval(y, z)
-    arrays["expected_2d"] = np.asarray(y)
-    arrays["expected_3d"] = np.asarray(z)
-    arrays["metadata"] = np.array(
-        json.dumps(
-            {
-                "seed": 20261007,
-                "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                "reference": "Qualified RadNN working source Graph before core extraction",
-                "mlx_version": version("mlx"),
-                "backend": str(mx.default_device()),
-            }
-        )
+    arrays["expected_bn"] = x.permute(0, 2, 3, 1).numpy()
+    x = Swish()(x).permute(0, 2, 3, 1)
+    arrays["expected_swish"] = x.numpy()
+    x = F.layer_norm(x, (6,), eps=1e-5)
+    arrays["expected_ln"] = x.numpy()
+    x = F.interpolate(x.permute(0, 3, 1, 2), scale_factor=2, mode="bilinear", align_corners=True)
+    arrays["expected_2d"] = x.permute(0, 2, 3, 1).numpy()
+    z = F.conv_transpose3d(
+        tensors["input_3d"].permute(0, 4, 1, 2, 3), tensors["deconv.weight"], stride=2
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.output, **arrays)
+    arrays["expected_deconv"] = z.permute(0, 2, 3, 4, 1).numpy()
+    arrays["expected_3d"] = F.instance_norm(z, eps=1e-5).permute(0, 2, 3, 4, 1).numpy()
+    arrays["expected_relu"] = F.relu(tensors["input_2d"]).numpy()
+
+
+def record_extra_layers(rng: np.random.Generator, arrays: dict[str, np.ndarray]) -> None:
+    for name, shape in (
+        ("projection.weight", (3, 4)),
+        ("projection.bias", (3,)),
+        ("ln.weight", (4,)),
+        ("ln.bias", (4,)),
+        ("volume.weight", (3, 2, 3, 3, 3)),
+    ):
+        arrays[name] = rng.normal(size=shape).astype(np.float32)
+    tensors = {key: torch.from_numpy(value) for key, value in arrays.items()}
+    arrays["expected_linear"] = F.linear(
+        tensors["input_2d"], tensors["projection.weight"], tensors["projection.bias"]
+    ).numpy()
+    arrays["expected_affine_ln"] = F.layer_norm(
+        tensors["input_2d"], (4,), tensors["ln.weight"], tensors["ln.bias"], eps=1e-5
+    ).numpy()
+    y = F.conv3d(tensors["input_3d"].permute(0, 4, 1, 2, 3), tensors["volume.weight"], padding=1)
+    arrays["expected_volume"] = y.permute(0, 2, 3, 4, 1).numpy()
+
+
+def record_residuals(rng: np.random.Generator, arrays: dict[str, np.ndarray]) -> None:
+    x = torch.from_numpy(arrays["input_3d"]).permute(0, 4, 1, 2, 3)
+    for name, channels in (("residual_same", 2), ("residual_project", 3)):
+        block = UnetResBlock(3, 2, channels, 3, 1, ("instance", {"affine": False, "eps": 1e-5}))
+        state = {}
+        for key, value in block.state_dict().items():
+            array = rng.normal(size=tuple(value.shape)).astype(np.float32)
+            arrays[f"{name}.{key}"] = array
+            state[key] = torch.from_numpy(array)
+        block.load_state_dict(state, strict=True)
+        arrays[f"expected_{name}"] = block(x).permute(0, 2, 3, 4, 1).numpy()
+
+
+def main() -> None:
+    root = output_directory(__doc__)
+    rng, arrays = seeded_arrays()
+    with torch.no_grad():
+        record_layers(arrays)
+        record_extra_layers(rng, arrays)
+        record_residuals(rng, arrays)
+    save_fixture(root, "channel_last", 20261007, arrays)
 
 
 if __name__ == "__main__":

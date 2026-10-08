@@ -16,8 +16,8 @@ def load_torch_checkpoint(path: Path, *, weights_only: bool = True) -> dict[str,
     except ImportError as exc:
         raise MissingDependencyError(
             "Checkpoint conversion requires torch to unpickle the source files",
-            extra="models",
-            hint="Install Torch and rerun the converter.",
+            extra="conversion",
+            hint="Install medmlx-core[conversion] and rerun the converter.",
         ) from exc
     payload = torch.load(path, map_location="cpu", weights_only=weights_only)
     if not isinstance(payload, dict):

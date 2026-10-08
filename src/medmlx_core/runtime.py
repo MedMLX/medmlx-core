@@ -10,9 +10,7 @@ from medmlx_core.errors import MissingDependencyError
 
 MLX_EXTRA = "mlx"
 _UNSUPPORTED_HINT = (
-    "Install medmlx-core on macOS Apple Silicon, or medmlx-core[cpu], "
-    "medmlx-core[cuda12], or medmlx-core[cuda13] on Linux x86_64, "
-    "and request --device mlx."
+    "Install medmlx-core on macOS Apple Silicon with Metal available, then call import_mlx()."
 )
 
 
@@ -55,8 +53,9 @@ def probe_mlx_runtime() -> MlxHostReport:
     macos_version = _macos_version(system)
     apple_chip = _apple_chip(system, machine)
     memory_bytes = _memory_bytes(system)
-    mlx_version, import_reason = _mlx_version()
-    if (system, machine) not in {("Darwin", "arm64"), ("Linux", "x86_64")}:
+    supported = (system, machine) == ("Darwin", "arm64")
+    mlx_version, import_reason = _mlx_version() if supported else (None, None)
+    if not supported:
         return MlxHostReport(
             available=False,
             mlx_version=mlx_version,
@@ -67,15 +66,15 @@ def probe_mlx_runtime() -> MlxHostReport:
             platform_system=system,
             platform_machine=machine,
             reason=(
-                "MLX inference requires macOS on Apple Silicon or Linux x86_64; "
+                "MLX inference requires macOS on Apple Silicon with Metal; "
                 f"this host is {system} {machine}"
             ),
             hint=_UNSUPPORTED_HINT,
         )
-    if mlx_version is None:
+    if mlx_version is None or import_reason is not None:
         return MlxHostReport(
             available=False,
-            mlx_version=None,
+            mlx_version=mlx_version,
             macos_version=macos_version,
             apple_chip=apple_chip,
             memory_bytes=memory_bytes,
@@ -85,9 +84,7 @@ def probe_mlx_runtime() -> MlxHostReport:
             reason=import_reason or "mlx is not installed",
             hint=_UNSUPPORTED_HINT,
         )
-    metal_ok, metal_reason = (
-        _metal_available() if system == "Darwin" else _linux_backend_available()
-    )
+    metal_ok, metal_reason = _metal_available()
     if not metal_ok:
         return MlxHostReport(
             available=False,
@@ -136,7 +133,7 @@ def require_mlx_device(device: str) -> MlxHostReport:
         raise MissingDependencyError(
             f"An MLX execution route requires an explicit mlx device; got {device!r}",
             extra=MLX_EXTRA,
-            hint="Pass --device mlx. There is no Torch, MPS, NumPy, or CPU fallback.",
+            hint="Request the MLX runtime; no backend fallback is selected.",
         )
     return require_mlx_runtime()
 
@@ -154,14 +151,27 @@ def _mlx_version() -> tuple[str | None, str | None]:
         return None, "mlx is not installed"
     version = getattr(mx, "__version__", None)
     if isinstance(version, str) and version.strip():
-        return version, None
+        return _checked_mlx_version(version)
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as package_version
 
     try:
-        return package_version("mlx"), None
+        return _checked_mlx_version(package_version("mlx"))
     except PackageNotFoundError:
         return None, "mlx is installed but reports no version"
+
+
+def _checked_mlx_version(version: str) -> tuple[str, str | None]:
+    parts = version.split(".")
+    if (
+        len(parts) == 3
+        and all(part.isdigit() for part in parts)
+        and (0, 32, 3) <= tuple(int(part) for part in parts) < (0, 33, 0)
+    ):
+        return version, None
+    return version, (
+        f"MLX >=0.32.3,<0.33 is required; found {version}. Upgrade MLX before inference."
+    )
 
 
 def _macos_version(system: str) -> str | None:
@@ -210,12 +220,10 @@ def _memory_bytes(system: str) -> int | None:
 
 
 def import_mlx() -> Any:
-    """Select Metal on Darwin; retain the configured CPU/CUDA backend on Linux."""
+    """Require macOS Apple Silicon and select the Metal GPU."""
 
-    report = require_mlx_runtime()
+    require_mlx_runtime()
     mx = _load_mlx_core()
-    if report.platform_system == "Linux":
-        return mx
     if not hasattr(mx, "metal") or not mx.metal.is_available():
         raise MissingDependencyError(
             "MLX Metal GPU is not available; refusing a CPU or host fallback",
@@ -277,24 +285,14 @@ def _metal_available() -> tuple[bool, str | None]:
     return True, None
 
 
-def _linux_backend_available() -> tuple[bool, str | None]:
-    try:
-        mx = _load_mlx_core()
-    except ImportError:
-        return False, "mlx is not installed"
-    if not mx.is_available(mx.default_device()):
-        return False, "MLX configured CPU or CUDA backend is not available"
-    return True, None
-
-
-__all__ = [  # noqa: RUF022 -- retain the snapshot export order
+__all__ = [
     "MLX_EXTRA",
     "MlxHostReport",
     "import_mlx",
-    "mlx_peak_memory_bytes",
     "mlx_default_device_name",
+    "mlx_peak_memory_bytes",
     "probe_mlx_runtime",
-    "reset_mlx_peak_memory",
     "require_mlx_device",
     "require_mlx_runtime",
+    "reset_mlx_peak_memory",
 ]

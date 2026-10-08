@@ -11,7 +11,6 @@ from medmlx_core.errors import (
     MedmlxError,
     MissingDependencyError,
     ModelExecutionError,
-    RadnnError,
 )
 from medmlx_core.layout import (
     conv3d_weight_to_mlx,
@@ -62,7 +61,6 @@ __all__ = [
     "MissingDependencyError",
     "MlxHostReport",
     "ModelExecutionError",
-    "RadnnError",
     "as_fp32",
     "avg_pool3d_ncdhw",
     "compute_importance_map",

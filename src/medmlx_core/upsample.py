@@ -8,7 +8,7 @@ from typing import Any
 
 from medmlx_core.layout import require_ncdhw
 
-# MLX fork 63bbcccf: retain the qualified interpolation arithmetic and strides.
+# Half-pixel coordinates implement PyTorch align_corners=False interpolation.
 _SOURCE = """
 uint idx = thread_position_in_grid.x;
 if (idx >= N * C * OD * OH * OW) return;
@@ -64,7 +64,7 @@ out[idx] = value + skip[s];
 @cache
 def _kernel(mx: Any) -> Any:
     return mx.fast.metal_kernel(
-        name="radnn_segresnet_trilinear2x_add",
+        name="medmlx_segresnet_trilinear2x_add",
         input_names=["x", "skip"],
         output_names=["out"],
         source=_SOURCE,

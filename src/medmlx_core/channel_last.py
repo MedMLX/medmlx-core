@@ -1,4 +1,4 @@
-"""Channel-last MLX arithmetic shared by the three pinned inference graphs."""
+"""Channel-last MLX layers shared by standalone medical imaging models."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -79,4 +79,4 @@ class ChannelLastGraph:
         if x.ndim != len(shape) + 1 or tuple(x.shape[1:]) != shape or x.shape[0] < 1:
             raise ValueError(f"Expected Bx{'x'.join(map(str, shape))} input; got {x.shape}")
         if x.dtype != self.mx.float32:
-            raise ValueError("Pinned MONAI MLX graphs require float32 inputs")
+            raise ValueError("MedMLX channel-last graphs require float32 inputs")

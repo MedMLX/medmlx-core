@@ -1,10 +1,10 @@
-"""Shared exceptions with RadNN-compatible names and builtin base classes."""
+"""Shared MedMLX exceptions with builtin base classes."""
 
 from __future__ import annotations
 
 
-class RadnnError(Exception):
-    """Base class for every error raised by the public radnn API."""
+class MedmlxError(Exception):
+    """Base class for every error raised by the public MedMLX API."""
 
     def __str__(self) -> str:
         if not self.args:
@@ -14,15 +14,15 @@ class RadnnError(Exception):
         return str(self.args)
 
 
-class MissingDependencyError(RadnnError, ImportError):
+class MissingDependencyError(MedmlxError, ImportError):
     """Raised when an optional model dependency/extra is not installed.
 
     Args:
         message: Human-readable description of the missing dependency.
-        extra: The pip extra that provides the dependency (e.g. ``"medsam2"``),
+        extra: The pip extra that provides the dependency (e.g. ``"conversion"``),
             or ``None`` when no single extra covers it.
         hint: An actionable install/setup hint, e.g.
-            ``"Install the 'medsam2' extra (...)"``.
+            ``"Install medmlx-core[conversion]"``.
 
     Attributes:
         extra (str | None): The pip extra carrying the dependency.
@@ -41,29 +41,29 @@ class MissingDependencyError(RadnnError, ImportError):
         self.hint = hint
 
 
-class ModelExecutionError(RadnnError, RuntimeError):
+class ModelExecutionError(MedmlxError, RuntimeError):
     """Raised when a model runner fails during execution.
 
     This signals a model/runtime failure, not a caller input error.
     """
 
 
-class InvalidInputError(RadnnError, ValueError):
+class InvalidInputError(MedmlxError, ValueError):
     """Raised when caller-supplied inputs are missing, malformed, or an unsupported combination."""
 
 
-class AssetNotReadyError(RadnnError, FileNotFoundError):
-    """Raised when a model's local assets/checkpoints are missing or not staged.
+class AssetNotReadyError(MedmlxError, FileNotFoundError):
+    """Raised when a model's local assets or checkpoints are missing or mismatched.
 
     Args:
-        message: Human-readable description of the missing/unstaged asset.
+        message: Human-readable description of the missing or incompatible asset.
         reason: Short machine-friendly reason, e.g.
-            ``"missing checkpoints/nv_segment_ct/.../model.pt"``.
-        hint: An actionable staging hint, e.g. the ``radnn ... stage`` command.
+            ``"missing weights/model.safetensors"``.
+        hint: An actionable setup hint, e.g. a model checkpoint conversion command.
 
     Attributes:
         reason (str | None): Why the asset is not ready.
-        hint (str | None): Suggested staging/setup command.
+        hint (str | None): Suggested conversion or setup command.
     """
 
     def __init__(
@@ -78,13 +78,10 @@ class AssetNotReadyError(RadnnError, FileNotFoundError):
         self.hint = hint
 
 
-MedmlxError = RadnnError
-
 __all__ = [
     "AssetNotReadyError",
     "InvalidInputError",
     "MedmlxError",
     "MissingDependencyError",
     "ModelExecutionError",
-    "RadnnError",
 ]

@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from test_equivalence import load_fixture
+from fixture_cases import array_cases
 
 from medmlx_core.checkpoints import (
     _maybe_array,
@@ -11,36 +11,38 @@ from medmlx_core.checkpoints import (
 from medmlx_core.errors import InvalidInputError
 
 
-def test_synthetic_weight_mapping_matches_radnn():
-    metadata, arrays = load_fixture("checkpoints")
+def test_synthetic_weight_mapping_preserves_host_arrays():
+    inputs, _ = array_cases()
+    host = inputs["linear_w"].astype(np.float64)
     torch = pytest.importorskip("torch")
     state = {
-        "module.weight": torch.from_numpy(arrays["host"].copy()),
-        "array": arrays["host"],
+        "module.weight": torch.from_numpy(host.copy()),
+        "array": host,
         "epoch": 4,
         "description": "ignored",
     }
     actual = tensor_mapping_from_payload(state, what="synthetic")
-    assert list(actual) == metadata["keys"]
-    for key, value in actual.items():
-        assert value.dtype == arrays[f"mapped__{key}"].dtype
-        assert np.array_equal(value, arrays[f"mapped__{key}"])
+    assert list(actual) == ["module.weight", "array"]
+    for value in actual.values():
+        assert value.dtype == host.dtype
+        assert np.array_equal(value, host)
     pairs = mapping_from_pairs(list(actual.items()), what="synthetic")
-    assert list(pairs) == metadata["pair_keys"]
+    assert list(pairs) == ["module.weight", "array"]
     for key in pairs:
-        assert np.array_equal(pairs[key], arrays[f"mapped__{key}"])
-    assert _maybe_array(arrays["host"]) is arrays["host"]
+        assert np.array_equal(pairs[key], host)
+    assert _maybe_array(host) is host
     for value in (1, 1.0, True, "text", np.float32(1), None, object()):
         assert _maybe_array(value) is None
 
 
 @pytest.mark.parametrize("weights_only", [False, True])
-def test_optional_torch_checkpoint_matches_radnn(tmp_path, weights_only):
-    _, arrays = load_fixture("checkpoints")
+def test_optional_torch_checkpoint_preserves_host_arrays(tmp_path, weights_only):
+    inputs, _ = array_cases()
+    host = inputs["linear_w"].astype(np.float64)
     torch = pytest.importorskip("torch")
-    state = {"module.weight": torch.from_numpy(arrays["host"].copy())}
+    state = {"module.weight": torch.from_numpy(host.copy())}
     if not weights_only:
-        state.update(array=arrays["host"], epoch=4, description="ignored")
+        state.update(array=host, epoch=4, description="ignored")
     path = tmp_path / "synthetic.pt"
     torch.save(state, path)
     actual = tensor_mapping_from_payload(
@@ -48,11 +50,11 @@ def test_optional_torch_checkpoint_matches_radnn(tmp_path, weights_only):
     )
     if weights_only:
         assert list(actual) == ["module.weight"]
-        assert np.array_equal(actual["module.weight"], arrays["safe"])
+        assert np.array_equal(actual["module.weight"], host)
     else:
         assert list(actual) == ["module.weight", "array"]
-        for key, value in actual.items():
-            assert np.array_equal(value, arrays[f"loaded__{key}"])
+        for value in actual.values():
+            assert np.array_equal(value, host)
 
 
 def test_rejects_duplicate_mapping_and_malformed_tensor():
@@ -77,4 +79,4 @@ def test_torch_loader_rejects_non_mapping_checkpoint(tmp_path):
     path = tmp_path / "bad.pt"
     torch.save([1, 2], path)
     with pytest.raises(InvalidInputError, match=r"bad\.pt is not a mapping checkpoint"):
-        load_torch_checkpoint(path)
+        load_torch_checkpoint(path, weights_only=False)

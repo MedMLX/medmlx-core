@@ -2,101 +2,68 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import mlx.core as mx
-import numpy as np
 import pytest
-from fixture_cases import darwin_contracts, error_contracts, peak_cases
-from test_equivalence import load_fixture
+from fixture_cases import darwin_contracts, peak_cases
 
 from medmlx_core import errors, runtime
 
 
-def test_simulated_darwin_arm64_matches_radnn():
-    metadata, _ = load_fixture("runtime")
-    assert darwin_contracts(runtime) == metadata["darwin"]
-
-
-def test_peak_memory_api_generations_match_radnn():
-    metadata, _ = load_fixture("runtime")
-    assert peak_cases(runtime) == metadata["peak"]
-
-
-def test_errors_match_radnn():
-    metadata, _ = load_fixture("errors")
-    assert error_contracts(errors) == metadata["contracts"]
-    assert str(errors.RadnnError()) == ""
-    assert errors.MedmlxError is errors.RadnnError
-
-
-def test_real_linux_runtime_and_execution():
-    if (runtime.platform.system(), runtime.platform.machine()) != ("Linux", "x86_64"):
-        pytest.skip("Real Linux x86_64 host required")
-    report = runtime.probe_mlx_runtime()
-    assert report.available
-    assert report.reason is report.hint is None
-    assert report.macos_version is report.apple_chip is report.memory_bytes is None
-    assert report.platform_system == "Linux"
-    assert report.platform_machine == "x86_64"
-    assert set(report.to_payload()) == {
-        "available",
-        "mlx_version",
-        "macos_version",
-        "apple_chip",
-        "memory_bytes",
-        "python_version",
-        "platform_system",
-        "platform_machine",
-        "reason",
-        "hint",
+def test_simulated_darwin_arm64_contract():
+    contract = darwin_contracts(runtime)
+    expected = {
+        "available": True,
+        "mlx_version": "0.32.3",
+        "macos_version": "15.0",
+        "apple_chip": "Apple M3",
+        "memory_bytes": 17179869184,
+        "python_version": "3.12.13",
+        "platform_system": "Darwin",
+        "platform_machine": "arm64",
+        "reason": None,
+        "hint": None,
     }
-    assert report.mlx_version == "0.32.3"
-    assert runtime.require_mlx_runtime() == report
-    assert runtime.require_mlx_device("MLX") == report
-    before = mx.default_device()
-    selected = runtime.import_mlx()
-    assert selected is mx
-    assert mx.default_device() == before
-    assert mx.is_available(before)
-    assert runtime.mlx_default_device_name(mx) == str(before)
-    assert np.array_equal(np.array(selected.array([1, 2, 3]) + 1), [2, 3, 4])
+    assert contract["probe"] == contract["required"] == contract["device"] == expected
+    assert contract["selected"] == ["gpu"]
+    assert contract["device_name"] == "Device(gpu, 0)"
+    assert contract["invalid_device"]["type"] == "MissingDependencyError"
+    assert "explicit mlx device" in contract["invalid_device"]["message"]
+    assert not contract["missing_metal"]["available"]
+    assert "refusing a CPU or host fallback" in contract["missing_metal"]["reason"]
+    assert contract["rejected"]["type"] == "MissingDependencyError"
 
 
-@pytest.mark.parametrize("device", ["cpu", "gpu"])
-def test_linux_retains_explicit_cpu_or_cuda_backend(device):
-    calls = []
-    backend = SimpleNamespace(
-        __version__="0.32.3",
-        default_device=lambda: device,
-        is_available=lambda selected: selected == device,
-        set_default_device=lambda selected: calls.append(selected),
-    )
-    with (
-        patch.object(runtime.platform, "system", return_value="Linux"),
-        patch.object(runtime.platform, "machine", return_value="x86_64"),
-        patch.object(runtime, "_load_mlx_core", return_value=backend),
-    ):
-        assert runtime.probe_mlx_runtime().available
-        assert runtime.import_mlx() is backend
-        assert calls == []
-        backend.is_available = lambda _: False
-        assert not runtime.probe_mlx_runtime().available
-        with pytest.raises(errors.MissingDependencyError, match="configured CPU or CUDA backend"):
-            runtime.import_mlx()
+def test_peak_memory_api_generations_contract():
+    for record in peak_cases(runtime):
+        assert record["events"] == ([] if record["route"] == "absent" else ["reset"])
+        value = record["counter"]
+        if record["route"] == "absent":
+            assert record["kind"] == "none"
+        elif isinstance(value, bool | str) or value < 0:
+            assert record["kind"] == "error"
+            assert record["type"] == "RuntimeError"
+            assert (
+                record["message"] == "MLX peak-memory counter did not return a non-negative number"
+            )
+        else:
+            assert record["value"] == int(value)
 
 
 @pytest.mark.parametrize(
-    ("system", "machine"), [("Darwin", "x86_64"), ("Linux", "aarch64"), ("Windows", "AMD64")]
+    ("system", "machine"), [("Darwin", "x86_64"), ("Linux", "x86_64"), ("Windows", "AMD64")]
 )
 def test_unsupported_hosts_are_rejected(system, machine):
     with (
         patch.object(runtime.platform, "system", return_value=system),
         patch.object(runtime.platform, "machine", return_value=machine),
+        patch.object(runtime, "_load_mlx_core") as load_backend,
     ):
         report = runtime.probe_mlx_runtime()
         assert not report.available
         assert f"{system} {machine}" in report.reason
+        assert report.mlx_version is None
         with pytest.raises(errors.MissingDependencyError):
             runtime.require_mlx_runtime()
+        load_backend.assert_not_called()
 
 
 def test_missing_mlx_reports_unavailable():
@@ -106,6 +73,28 @@ def test_missing_mlx_reports_unavailable():
         assert not runtime.probe_mlx_runtime().available
 
 
+@pytest.mark.parametrize("version", ["0.32.2", "0.31.4", "0.33.0", "0.32.3.dev1", "unknown"])
+def test_unsupported_mlx_versions_fail_before_backend_execution(version):
+    backend = SimpleNamespace(__version__=version)
+    with (
+        patch.object(runtime.platform, "system", return_value="Darwin"),
+        patch.object(runtime.platform, "machine", return_value="arm64"),
+        patch.object(runtime, "_load_mlx_core", return_value=backend),
+        patch.object(runtime, "_metal_available") as metal,
+    ):
+        report = runtime.probe_mlx_runtime()
+        assert not report.available
+        assert report.mlx_version == version
+        assert "MLX >=0.32.3,<0.33 is required" in report.reason
+        with pytest.raises(errors.MissingDependencyError, match="Upgrade MLX before inference"):
+            runtime.import_mlx()
+        metal.assert_not_called()
+
+
 def test_report_serializes_without_backend_objects():
-    report = runtime.probe_mlx_runtime()
+    backend = SimpleNamespace(
+        __version__="0.32.3", metal=SimpleNamespace(is_available=lambda: True)
+    )
+    with patch.object(runtime, "_load_mlx_core", return_value=backend):
+        report = runtime.probe_mlx_runtime()
     assert json.loads(json.dumps(report.to_payload())) == report.to_payload()
