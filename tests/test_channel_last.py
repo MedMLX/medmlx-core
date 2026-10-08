@@ -22,8 +22,8 @@ def graph_and_arrays():
 
 def assert_stage(actual: mx.array, expected: np.ndarray, *, budget: str = "graph") -> None:
     mx.eval(actual)
-    actual = np.asarray(actual)
-    assert_reference(actual, expected, budget=budget)
+    host = np.asarray(actual)
+    assert_reference(host, expected, budget=budget)
 
 
 @pytest.mark.parametrize("case", ["2d", "3d"])

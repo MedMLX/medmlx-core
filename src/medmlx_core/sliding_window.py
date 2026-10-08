@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from itertools import product
-from typing import Any
+from typing import Any, Literal
 
 import mlx.core as mx
 import numpy as np
@@ -115,7 +115,9 @@ def _pad_input(
         crop.append(slice(before, before + size))
     if not any(before or after for before, after in padding):
         return inputs, tuple(crop)
-    modes = {"constant": "constant", "reflect": "reflect", "replicate": "edge", "circular": "wrap"}
+    modes: dict[str, Literal["constant", "reflect", "edge", "wrap"]] = {
+        "constant": "constant", "reflect": "reflect", "replicate": "edge", "circular": "wrap"
+    }
     if padding_mode not in modes:
         raise ValueError(f"Unsupported padding_mode: {padding_mode}")
     if padding_mode != "constant" and cval != 0:
@@ -125,8 +127,11 @@ def _pad_input(
             raise ValueError("Reflect padding must be smaller than the input dimension")
         if padding_mode == "circular" and max(before, after) > size:
             raise ValueError("Circular padding cannot wrap more than once")
-    options = {"constant_values": cval} if padding_mode == "constant" else {}
-    return np.pad(inputs, padding, mode=modes[padding_mode], **options), tuple(crop)
+    if padding_mode == "constant":
+        padded = np.pad(inputs, padding, mode="constant", constant_values=cval)
+    else:
+        padded = np.pad(inputs, padding, mode=modes[padding_mode])
+    return padded, tuple(crop)
 
 
 def sliding_window_inference(
@@ -139,7 +144,7 @@ def sliding_window_inference(
     sigma_scale: Sequence[float] | float = 0.125,
     padding_mode: str = "constant",
     cval: float = 0.0,
-    sw_device: mx.Device | str | None = None,
+    sw_device: mx.Device | mx.DeviceType | str | None = None,
     device: str | None = None,
     progress: bool = False,
     roi_weight_map: np.ndarray | mx.array | None = None,
@@ -157,7 +162,7 @@ def sliding_window_inference(
     Output dtype follows the input, including when predictor dtype differs.
     ``with_coord`` passes MONAI's list of batch/channel/spatial slice lists.
 
-    ``sw_device`` is None, 'gpu' or an MLX GPU device; prediction requires Metal.
+    ``sw_device`` is None, 'gpu', mx.gpu or an MLX GPU device; prediction requires Metal.
     ``device`` is None or 'cpu' because stitching is on the host. Active buffering, process_fn,
     progress bars, multiple outputs, and scaled outputs are unsupported.
     None/nonpositive ROI components use the corresponding input size.
@@ -175,7 +180,7 @@ def sliding_window_inference(
         and (not isinstance(sw_device, mx.Device) or sw_device.type != mx.gpu)
     ):
         raise ValueError("sw_device must be None, 'gpu', or an MLX GPU device")
-    if sw_device == "gpu":
+    if isinstance(sw_device, str):
         sw_device = mx.gpu
     host = np.asarray(inputs)
     spatial = host.shape[2:]
@@ -248,5 +253,6 @@ def sliding_window_inference(
         predicted *= importance
         for coord, patch in zip(coordinates, predicted, strict=True):
             output[tuple(coord)] += patch
+    assert output is not None  # Nonempty images always produce at least one window.
     output /= counts
     return output[(slice(None), slice(None), *crop)]

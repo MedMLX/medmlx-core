@@ -59,6 +59,7 @@ def test_unsupported_hosts_are_rejected(system, machine):
     ):
         report = runtime.probe_mlx_runtime()
         assert not report.available
+        assert report.reason is not None
         assert f"{system} {machine}" in report.reason
         assert report.mlx_version is None
         with pytest.raises(errors.MissingDependencyError):
@@ -85,6 +86,7 @@ def test_unsupported_mlx_versions_fail_before_backend_execution(version):
         report = runtime.probe_mlx_runtime()
         assert not report.available
         assert report.mlx_version == version
+        assert report.reason is not None
         assert "MLX >=0.32.3,<0.33 is required" in report.reason
         with pytest.raises(errors.MissingDependencyError, match="Upgrade MLX before inference"):
             runtime.import_mlx()

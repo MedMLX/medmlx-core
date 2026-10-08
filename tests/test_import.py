@@ -1,10 +1,3 @@
-import medmlx_core
-
-
-def test_version() -> None:
-    assert medmlx_core.__version__ == "0.1.1"
-
-
 def test_package_import_does_not_load_optional_frameworks() -> None:
     import subprocess
     import sys

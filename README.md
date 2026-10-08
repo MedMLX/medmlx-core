@@ -136,7 +136,7 @@ Independent sliding-window tests retain exact comparison for representable
 constant-blending inputs, maximum absolute error 1e-6 for Gaussian logits and
 1e-7 for Gaussian maps because NumPy/Torch FP32 exponential kernels round differently.
 
-**Qualification:** The existing 209-test suite passes on Apple Silicon with
+**Qualification:** The existing helper suite passes on Apple Silicon with
 MLX 0.32.3 on Metal. Results apply to the operation-specific bounds declared in
 `tests/numerical_contract.json`, including the cumulative graph budget. Reference
 arrays retain the independently recorded upstream outputs and provenance.

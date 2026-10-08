@@ -119,7 +119,16 @@ class FixtureMetadata:
             cases.append(RecordedCase(case["id"], tuple(outputs)))
         if len({case.id for case in cases}) != len(cases):
             raise ValueError("Fixture case ids must be unique")
-        return cls(upstream, recording_platform, seed, tuple(cases), *provenance, mode)
+        return cls(
+            upstream=upstream,
+            platform=recording_platform,
+            seed=seed,
+            cases=tuple(cases),
+            reference_device=provenance[0],
+            numpy_version=provenance[1],
+            torch_build=provenance[2],
+            mode=mode,
+        )
 
     def to_json(self) -> str:
         payload = {"schema_version": 2, **asdict(self)}
