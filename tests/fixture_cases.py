@@ -86,6 +86,9 @@ class FixtureMetadata:
             or payload["schema_version"] != 2
         ):
             raise ValueError("Invalid fixture schema")
+        allowed = {field.name for field in fields(cls)} | {"schema_version"}
+        if payload.keys() - allowed:
+            raise ValueError("Fixture metadata contains undeclared fields")
         recording_platform, seed = payload.get("platform"), payload.get("seed")
         if recording_platform != RECORDING_PLATFORM or type(seed) is not int:
             raise ValueError("Fixture must be recorded on darwin-arm64 with an explicit seed")
@@ -103,7 +106,12 @@ class FixtureMetadata:
             raise ValueError("Invalid fixture blend mode")
         cases = []
         for case in recorded:
-            if not isinstance(case, dict) or not isinstance(case.get("id"), str):
+            if (
+                not isinstance(case, dict)
+                or case.keys() != {"id", "outputs"}
+                or not isinstance(case.get("id"), str)
+                or not case["id"]
+            ):
                 raise ValueError("Fixture case must have an id")
             outputs = case.get("outputs")
             if not isinstance(outputs, list) or any(not isinstance(key, str) for key in outputs):

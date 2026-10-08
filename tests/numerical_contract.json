@@ -13,12 +13,12 @@
     "pointwise": {
       "rtol": 4.76837158203125e-7,
       "atol": 1.1920928955078125e-7,
-      "reason": "Four FP32 eps relative plus one eps near zero for differing sigmoid/exp rounding; reported rounding errors start at one eps."
+      "reason": "Four FP32 eps relative plus one eps near zero for differing sigmoid/exp rounding. The reviewer reports one-eps errors; upstream FP32 versus rounded float64 reaches two eps on these seeded inputs."
     },
     "dot": {
       "rtol": 1.9073486328125e-6,
       "atol": 3.814697265625e-6,
-      "reason": "Seeded convolution/linear reductions use differing FMA and summation orders. Sixteen eps relative plus a 32-eps cancellation floor covers the reported 3.8146973e-6 absolute difference."
+      "reason": "Seeded convolution/linear reductions use differing FMA and summation orders. Sixteen eps relative plus a 32-eps cancellation floor covers the reported 3.8146973e-6 difference and the upstream FP32/rounded-float64 comparison (max absolute 4.76837158e-6, with a relative component)."
     },
     "normalization": {
       "rtol": 9.5367431640625e-7,
@@ -33,7 +33,7 @@
     "interpolation": {
       "rtol": 4.76837158203125e-7,
       "atol": 4.76837158203125e-7,
-      "reason": "Four eps relative and absolute for the eight-corner weighted sum, separable evaluation and skip addition; no large reduction is involved."
+      "reason": "Four eps relative and absolute for the eight-corner weighted sum, separable evaluation and skip addition. Upstream FP32 versus rounded float64 reaches one eps; no large reduction is involved."
     },
     "graph": {
       "rtol": 7.62939453125e-6,

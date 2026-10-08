@@ -33,10 +33,19 @@ def _unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return fields
 
 
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"Invalid numerical JSON constant: {value}")
+
+
 def parse_contract(value: str) -> dict[str, NumericalBudget]:
-    payload = json.loads(value, object_pairs_hook=_unique_fields)
+    payload = json.loads(value, object_pairs_hook=_unique_fields, parse_constant=_reject_constant)
     boundary = {"schema_version": 1, "dtype": "float32", "shape": "reference"}
-    if not isinstance(payload, dict) or type(payload.get("schema_version")) is not int:
+    fields = {"schema_version", "dtype", "shape", "allow_nan", "allow_inf", "budgets"}
+    if (
+        not isinstance(payload, dict)
+        or payload.keys() != fields
+        or type(payload.get("schema_version")) is not int
+    ):
         raise ValueError("Invalid numerical contract")
     if any(payload.get(key) != expected for key, expected in boundary.items()):
         raise ValueError("Unsupported numerical boundary")

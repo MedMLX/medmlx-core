@@ -15,6 +15,13 @@ not supplied. Acceptance budgets are declared in `numerical_contract.json`;
 they preserve exact shape/dtype checks and reject all non-finite results. These
 are budgets for the seeded helper tests, not a general model accuracy claim.
 
+A host check recalculated 66 recorded outputs using the same pinned upstream
+operations in float64 and rounded them to FP32. All satisfied their declared
+budgets. Maximum absolute differences were 4.76837158e-6 for dot products,
+4.76837158e-7 for normalization, 2.38418579e-7 for pointwise operations,
+1.19209290e-7 for interpolation and 3.81469727e-6 across channel-last graphs.
+This measures upstream FP32 rounding; it does not substitute for Metal testing.
+
 | Failing test (relative to `tests/`) | Decision and real property |
 | --- | --- |
 | `test_channel_last.py::test_channel_last_seeded_graph_matches_upstream[2d]` | Rewrite: compare the final graph within its cumulative budget; isolate each layer on its upstream stage input. |
@@ -68,6 +75,13 @@ Additional bad coverage identified before editing:
 - `test_renal_deconv2x_matches_torch_repeated`: rewrite using seeded small-channel weights at the same 48-cubed spatial size; an external model checkpoint is an unnecessary environment assumption. Exact signs near zero are not a valid FP32 helper contract.
 - `test_decoder_fusion_matches_torch_at_borders_and_singleton_axes`: retain its border/stride coverage, replace the loose 1e-4 budget with the interpolation budget.
 - Sliding-window tests selecting the MLX CPU backend: retain MONAI placement/blending coverage, execute the MLX predictor on Metal.
+- `test_unsupported_hosts_are_rejected`: strengthen the rejection property; an unsupported host must never load MLX.
+- Fixture provenance/parser tests: update to schema 2 and the single Mac recording directory, removing backend-key assumptions.
+
+Channel-last stage coverage now feeds each layer its upstream stage input so
+its error is isolated from earlier layers. Full 2D/3D graphs and residual blocks
+remain separate composition checks. The shared numerical gate has host tests
+that reject wrong values/layout/dtype/shape, NaN/Inf and malformed budgets.
 
 Pure layout, casts, copies, nearest-neighbor replication, padding, concatenation,
 ReLU, coordinates and discrete labels retain exact comparison. Constant-window
