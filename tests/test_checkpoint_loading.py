@@ -27,3 +27,30 @@ def test_checkpoint_loader_rejects_pickle_execution(tmp_path: Path) -> None:
     assert not marker.exists()
     torch.save({"model": {"weight": torch.tensor([2.0, 3.0])}}, path)
     assert load_torch_checkpoint(path)["model"]["weight"].tolist() == [2.0, 3.0]
+
+
+def test_missing_conversion_dependency_reports_install_extra() -> None:
+    import subprocess
+    import sys
+
+    code = """
+import importlib.abc
+import sys
+
+class BlockedTorch(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] == 'torch':
+            raise ImportError(f'blocked: {fullname}')
+
+sys.meta_path.insert(0, BlockedTorch())
+from medmlx_core import MissingDependencyError, load_torch_checkpoint
+try:
+    load_torch_checkpoint('unused.pt')
+except MissingDependencyError as exc:
+    assert exc.extra == 'conversion'
+    assert exc.hint == 'Install medmlx-core[conversion] and rerun the converter.'
+else:
+    raise AssertionError('missing Torch must fail before checkpoint loading')
+assert 'mlx' not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)

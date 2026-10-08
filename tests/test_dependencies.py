@@ -4,19 +4,19 @@ import sys
 from pathlib import Path
 
 
-def test_runtime_works_with_radnn_torch_and_monai_blocked():
+def test_runtime_works_with_torch_and_monai_blocked():
     code = """
 import importlib.abc
 import sys
 
 class BlockedDependencies(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'radnn', 'torch', 'monai'}:
+        if fullname.split('.')[0] in {'torch', 'monai'}:
             raise ImportError(f'blocked: {fullname}')
 
 sys.meta_path.insert(0, BlockedDependencies())
 import medmlx_core as core
-assert not {'radnn', 'torch', 'monai'} & sys.modules.keys()
+assert not {'torch', 'monai'} & sys.modules.keys()
 report = core.require_mlx_device('mlx')
 mx = core.import_mlx()
 x = mx.ones((1, 1, 1, 1, 1))
@@ -28,7 +28,7 @@ assert mx.all(result == 1).item()
 try:
     core.load_torch_checkpoint('unused.pt')
 except core.MissingDependencyError as exc:
-    assert exc.extra == 'models'
+    assert exc.extra == 'conversion'
     assert str(exc) == 'Checkpoint conversion requires torch to unpickle the source files'
 else:
     raise AssertionError('conversion must require optional torch')

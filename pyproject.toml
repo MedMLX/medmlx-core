@@ -12,29 +12,22 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/MONAI_LICENSE"]
 authors = [{ name = "Joseph Sandoval" }, { name = "Alfredo Sandoval Jr." }]
 dependencies = [
-  "mlx>=0.32.2,<0.33; platform_system == 'Darwin' and platform_machine == 'arm64'",
-  "mlx>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "mlx>=0.32.3,<0.33; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "numpy>=2.0,<3",
 ]
 
 [project.optional-dependencies]
-cpu = [
-  "mlx[cpu]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
-]
-cuda12 = [
-  "mlx[cuda12]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
-]
-cuda13 = [
-  "mlx[cuda13]>=0.32.2,<0.33; platform_system == 'Linux' and platform_machine == 'x86_64'",
-]
 conversion = [
   "torch>=2.6,<3",
 ]
 dev = [
+  "pyright[nodejs]==1.1.414",
+  "hypothesis>=6.140,<7",
   "monai==1.6.0",
+  "numpy>=2.2,<3",
   "pytest>=8.4,<10",
   "ruff>=0.13,<1",
-  "torch>=2.6,<3",
+  "torch==2.14.1",
 ]
 
 [tool.hatch.metadata]
@@ -56,4 +49,17 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
+extend-select = ["TID251", "ANN401"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["scripts","src","tests"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+enableTypeIgnoreComments = false
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Any" = {msg = "Use a precise type and parse untyped values at the boundary."}
+"typing_extensions.Any" = {msg = "Use a precise type and parse untyped values at the boundary."}

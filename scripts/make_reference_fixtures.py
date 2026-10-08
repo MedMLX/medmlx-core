@@ -1,144 +1,145 @@
 #!/usr/bin/env python3
-"""Generate small golden fixtures from the frozen cbaa1ac snapshot, never core."""
+"""Record seeded helper outputs from pinned MONAI/PyTorch and NumPy float64."""
 
 from __future__ import annotations
 
-import argparse
-import importlib
-import json
-import sys
-from pathlib import Path
-from tempfile import TemporaryDirectory
+from typing import Any
 
-import mlx.core as mx
 import numpy as np
 import torch
-
-REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "tests"))
-from fixture_cases import (  # noqa: E402
-    REFERENCE_BACKEND,
-    SNAPSHOT,
-    SOURCES,
-    array_cases,
-    backend_key,
-    darwin_contracts,
-    definitions,
-    error_contracts,
-    outcome,
-    peak_cases,
-    run_array_case,
-)
-
-FIXTURES = REPO / "tests" / "fixtures"
+from monai.apps.generation.maisi.networks.autoencoderkl_maisi import MaisiConvolution
+from reference_support import ArrayCase, array_cases, output_directory, save_fixture
+from torch.nn import functional as F
 
 
-def save(name: str, metadata: dict, arrays: dict | None = None) -> None:
-    payload = {} if arrays is None else dict(arrays)
-    payload["metadata"] = np.asarray(json.dumps({"radnn_commit": "cbaa1ac", **metadata}))
-    np.savez_compressed(FIXTURES / f"{name}.npz", **payload)
+def layout_reference(case: ArrayCase, args: list[Any]) -> Any:
+    name, x = case.function, args[0].astype(np.float64)
+    axes = {
+        "to_ndhwc": (0, 2, 3, 4, 1),
+        "to_ncdhw": (0, 4, 1, 2, 3),
+        "conv3d_weight_to_mlx": (0, 2, 3, 4, 1),
+        "conv_transpose3d_weight_to_mlx": (1, 2, 3, 4, 0),
+    }
+    if name == "require_ncdhw":
+        return None
+    if name in axes:
+        return x.transpose(axes[name]).astype(np.float32)
+    if name == "tokens_from_ncdhw":
+        return x.reshape(x.shape[0], x.shape[1], -1).transpose(0, 2, 1).astype(np.float32)
+    if name == "tokens_to_ncdhw":
+        return x.transpose(0, 2, 1).reshape(dict(case.kwargs)["spatial"]).astype(np.float32)
+    raise ValueError(f"No layout reference for {name}")
 
 
-def reference(name: str):
-    source = SNAPSHOT / SOURCES[name]
-    module_name = SOURCES[name].removesuffix(".py").replace("/", ".")
-    module = importlib.import_module(module_name)
-    if Path(module.__file__).resolve() != source:
-        raise RuntimeError(f"Reference must come from frozen snapshot: {module.__file__}")
-    return module
+def split_reference(case: ArrayCase, args: list[Any]) -> torch.Tensor:
+    x, weight, bias = args
+    options = dict(case.kwargs)
+    transposed = "transpose" in case.function
+    layer = MaisiConvolution(
+        spatial_dims=3,
+        in_channels=x.shape[1],
+        out_channels=weight.shape[1] if transposed else weight.shape[0],
+        num_splits=options.pop("num_splits", 1),
+        dim_split=options.pop("dim_split", 1),
+        print_info=False,
+        save_mem=False,
+        strides=options.pop("stride", 1),
+        kernel_size=weight.shape[2:],
+        conv_only=True,
+        is_transposed=transposed,
+        bias=bias is not None,
+        **options,
+    )
+    state = {"conv.conv.weight": weight}
+    if bias is not None:
+        state["conv.conv.bias"] = bias
+    layer.load_state_dict(state, strict=True)
+    return layer(x)
+
+
+def ops_reference(case: ArrayCase, args: list[Any]) -> Any:
+    name, options = case.function, dict(case.kwargs)
+    if name.startswith("split_conv"):
+        return split_reference(case, args)
+    if name == "as_fp32":
+        return args[0].float()
+    if name == "silu":
+        return F.silu(args[0])
+    if name == "linear":
+        return F.linear(*args)
+    if name == "conv3d_ncdhw":
+        return F.conv3d(*args, **options)
+    if name == "conv_transpose3d_ncdhw":
+        return F.conv_transpose3d(*args, **options)
+    if name == "group_norm_ncdhw":
+        return F.group_norm(args[0], options["num_groups"], *args[1:], eps=options["eps"])
+    if name == "avg_pool3d_ncdhw":
+        return F.avg_pool3d(args[0], options.get("kernel_size", 2), options.get("stride", 2))
+    if name in ("upsample_nearest_ncdhw", "upsample_trilinear_ncdhw"):
+        mode = "nearest" if "nearest" in name else "trilinear"
+        align = None if mode == "nearest" else False
+        return F.interpolate(
+            args[0], scale_factor=options.get("scale", 2), mode=mode, align_corners=align
+        )
+    if name == "pad_spatial_trailing_ncdhw":
+        return F.pad(args[0], (0, 1) * 3)
+    if name == "concat_channels_ncdhw":
+        return torch.cat(args, dim=1)
+    raise ValueError(f"No PyTorch reference for {name}")
+
+
+def reference(name: str, case: ArrayCase, arrays: dict[str, np.ndarray]) -> Any:
+    host = [None if key is None else arrays[key] for key in case.args]
+    if name == "layout":
+        return layout_reference(case, host)
+    if name == "precision" and case.function == "eps":
+        high = np.float32(1e-5)
+        return np.array([high, 1e-5 - np.float64(high)], dtype=np.float32)
+    if name == "precision" and case.function == "_moments":
+        source = host[0]
+        assert source is not None, "The moments case requires an input array"
+        grouped = source.astype(np.float64).reshape(source.shape[0], -1)
+        return grouped.mean(axis=1).astype(np.float32), grouped.var(axis=1).astype(np.float32)
+    args = [None if value is None else torch.from_numpy(value) for value in host]
+    if name == "ops":
+        return ops_reference(case, args)
+    x = args[0]
+    assert x is not None, "Tensor reference cases require an input tensor"
+    if case.function == "deconv2x_ncdhw":
+        weight = args[1]
+        assert weight is not None, "The deconvolution case requires a weight tensor"
+        return F.conv_transpose3d(x, weight, args[2], stride=2)
+    if case.function == "upsample_add_ncdhw":
+        skip = args[1]
+        assert skip is not None, "The upsample-add case requires a skip tensor"
+        return F.interpolate(x, scale_factor=2, mode="trilinear", align_corners=False) + skip
+    if name == "precision" and case.function == "conv":
+        weight = args[1]
+        assert weight is not None, "The convolution case requires a weight tensor"
+        return F.conv3d(x, weight, args[2], **dict(case.kwargs))
+    if name == "precision" and case.function == "norm":
+        return F.group_norm(x, 1, args[1], args[2], eps=1e-5)
+    raise ValueError(f"No reference for {name}.{case.function}")
 
 
 def main() -> None:
-    global FIXTURES
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
-    if str(SNAPSHOT) not in sys.path:
-        sys.path.insert(0, str(SNAPSHOT))
-    if (key := backend_key(mx)) != REFERENCE_BACKEND:
-        FIXTURES = FIXTURES / key
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    modules = {name: reference(name) for name in SOURCES}
+    root = output_directory(__doc__)
     arrays, cases = array_cases()
-    for name in ("ops", "layout", "upsample", "precision"):
-        module = modules[name]
-        payload = dict(arrays)
-        recorded = []
-        for case in cases[name]:
-            result = outcome(lambda c=case, m=module: run_array_case(m, c, arrays, mx), mx)
-            values = result.pop("arrays", [])
-            output_keys = []
-            for index, value in enumerate(values):
-                key = f"{case['id']}__output_{index}"
-                payload[key] = value
-                output_keys.append(key)
-            recorded.append({**case, "expected": result, "outputs": output_keys})
-        constants = {
-            key: value
-            for key, value in vars(module).items()
-            if key in ("_SOURCE", "_SOURCES") or key.startswith("LAYOUT_")
-        }
-        if name == "layout":
-            constants["IDENTITY_WEIGHT_LAYOUTS"] = sorted(module.IDENTITY_WEIGHT_LAYOUTS)
-        save(
-            name,
-            {
-                "seed": 7081,
-                "mlx_version": "0.32.3",
-                "reference_device": str(mx.default_device()),
-                "cases": recorded,
-                "definitions": definitions((SNAPSHOT / SOURCES[name]).read_text()),
-                "constants": constants,
-            },
-            payload,
-        )
-
-    runtime = modules["runtime"]
-    save(
-        "runtime",
-        {
-            "darwin": darwin_contracts(runtime),
-            "peak": peak_cases(runtime),
-            "definitions": definitions((SNAPSHOT / SOURCES["runtime"]).read_text()),
-        },
-    )
-    save(
-        "errors",
-        {
-            "contracts": error_contracts(modules["errors"]),
-            "definitions": definitions((SNAPSHOT / SOURCES["errors"]).read_text()),
-        },
-    )
-    checkpoint = modules["checkpoints"]
-    host = arrays["linear_w"].astype(np.float64)
-    tensor = torch.from_numpy(host.copy())
-    state = {"module.weight": tensor, "array": host, "epoch": 4, "description": "ignored"}
-    mapped = checkpoint.tensor_mapping_from_payload(state, what="synthetic")
-    pairs = checkpoint.mapping_from_pairs(list(mapped.items()), what="synthetic")
-    with TemporaryDirectory(dir=FIXTURES) as directory:
-        path = Path(directory) / "synthetic.pt"
-        torch.save(state, path)
-        loaded = checkpoint.load_torch_checkpoint(path)
-        restored = checkpoint.tensor_mapping_from_payload(loaded, what="synthetic")
-        torch.save({"module.weight": tensor}, path)
-        safe = checkpoint.load_torch_checkpoint(path, weights_only=True)
-        safe_array = checkpoint._maybe_array(safe["module.weight"])
-    source_definitions = definitions((SNAPSHOT / SOURCES["checkpoints"]).read_text())
-    save(
-        "checkpoints",
-        {"keys": list(mapped), "pair_keys": list(pairs), "definitions": source_definitions},
-        {
-            "host": host,
-            **{f"mapped__{key}": value for key, value in mapped.items()},
-            **{f"loaded__{key}": value for key, value in restored.items()},
-            "safe": safe_array,
-        },
-    )
-
-    # Numerical helpers take mx explicitly, so RadNN's host gate needs no bypass.
-    for path in sorted(FIXTURES.glob("*.npz")):
-        if path.stat().st_size >= 1_000_000:
-            raise RuntimeError(f"Fixture exceeds 1 MB: {path}")
-        print(f"{path.relative_to(REPO)}: {path.stat().st_size} bytes")
+    with torch.no_grad():
+        for name in ("layout", "ops", "upsample", "precision"):
+            payload, recorded = dict(arrays), []
+            for case in cases[name]:
+                if case.error is not None:
+                    continue  # Package input contracts are tested directly.
+                value = reference(name, case, arrays)
+                values = value if isinstance(value, tuple) else (() if value is None else (value,))
+                keys = []
+                for index, result in enumerate(values):
+                    key = f"{case.id}__output_{index}"
+                    payload[key] = np.asarray(result)
+                    keys.append(key)
+                recorded.append({"id": case.id, "outputs": keys})
+            save_fixture(root, name, 7081, payload, cases=recorded)
 
 
 if __name__ == "__main__":
