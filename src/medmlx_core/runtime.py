@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import platform
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from mlx.core import Device
 
 from medmlx_core.errors import MissingDependencyError
 
@@ -138,10 +141,11 @@ def require_mlx_device(device: str) -> MlxHostReport:
     return require_mlx_runtime()
 
 
-def _load_mlx_core() -> Any:
-    from importlib import import_module
+def _load_mlx_core():
+    # Infer the module itself so callers retain MLX's installed API signatures.
+    import mlx.core as mx
 
-    return import_module("mlx.core")
+    return mx
 
 
 def _mlx_version() -> tuple[str | None, str | None]:
@@ -219,7 +223,7 @@ def _memory_bytes(system: str) -> int | None:
     return int(raw)
 
 
-def import_mlx() -> Any:
+def import_mlx():
     """Require macOS Apple Silicon and select the Metal GPU."""
 
     require_mlx_runtime()
@@ -241,35 +245,39 @@ def import_mlx() -> Any:
     return mx
 
 
-def mlx_default_device_name(mx: Any) -> str:
+class DeviceRuntime(Protocol):
+    def default_device(self) -> Device: ...
+
+
+def mlx_default_device_name(mx: DeviceRuntime) -> str:
     """Return the live MLX default-device string."""
 
     return str(mx.default_device())
 
 
-def reset_mlx_peak_memory(mx: Any) -> None:
+def reset_mlx_peak_memory(mx: object) -> None:
     """Reset the runtime-native MLX peak-memory counter when available."""
 
-    reset = getattr(mx, "reset_peak_memory", None)
+    reset: object = getattr(mx, "reset_peak_memory", None)
     if callable(reset):
         reset()
         return
-    metal = getattr(mx, "metal", None)
-    metal_reset = None if metal is None else getattr(metal, "reset_peak_memory", None)
+    metal: object = getattr(mx, "metal", None)
+    metal_reset: object = None if metal is None else getattr(metal, "reset_peak_memory", None)
     if callable(metal_reset):
         metal_reset()
 
 
-def mlx_peak_memory_bytes(mx: Any) -> int | None:
+def mlx_peak_memory_bytes(mx: object) -> int | None:
     """Return the runtime-native peak-memory count in bytes when available."""
 
-    getter = getattr(mx, "get_peak_memory", None)
+    getter: object = getattr(mx, "get_peak_memory", None)
     if not callable(getter):
-        metal = getattr(mx, "metal", None)
+        metal: object = getattr(mx, "metal", None)
         getter = None if metal is None else getattr(metal, "get_peak_memory", None)
     if not callable(getter):
         return None
-    value = getter()
+    value: object = getter()
     if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
         raise RuntimeError("MLX peak-memory counter did not return a non-negative number")
     return int(value)
