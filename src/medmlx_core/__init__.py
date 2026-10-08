@@ -49,11 +49,6 @@ from medmlx_core.runtime import (
     require_mlx_runtime,
     reset_mlx_peak_memory,
 )
-from medmlx_core.sliding_window import (
-    compute_importance_map,
-    dense_patch_slices,
-    sliding_window_inference,
-)
 from medmlx_core.upsample import deconv2x_ncdhw, upsample_add_ncdhw
 
 __version__ = "0.0.0"
@@ -104,3 +99,23 @@ __all__ = [
     "upsample_nearest_ncdhw",
     "upsample_trilinear_ncdhw",
 ]
+
+# The sliding window imports MLX at module level, so load it on first use to
+# keep `import medmlx_core` from importing MLX.
+_LAZY = {
+    "compute_importance_map": "medmlx_core.sliding_window",
+    "dense_patch_slices": "medmlx_core.sliding_window",
+    "sliding_window_inference": "medmlx_core.sliding_window",
+}
+
+
+def __getattr__(name: str) -> object:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    value = getattr(import_module(module), name)
+    globals()[name] = value
+    return value
+
