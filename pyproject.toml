@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medmlx-core"
+version = "0.0.0"
+description = "Shared MLX runtime for MedMLX model packages"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "Proprietary" }
+authors = [{ name = "Joseph Sandoval" }, { name = "Alfredo Sandoval Jr." }]
+dependencies = [
+  "mlx==0.32.2; platform_system == 'Darwin' and platform_machine == 'arm64'",
+  "mlx==0.32.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "numpy>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<10",
+  "ruff>=0.13,<1",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/medmlx_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
