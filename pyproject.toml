@@ -30,8 +30,10 @@ conversion = [
   "torch>=2.6,<3",
 ]
 dev = [
+  "monai==1.6.0",
   "pytest>=8.4,<10",
   "ruff>=0.13,<1",
+  "torch>=2.6,<3",
 ]
 
 [tool.hatch.metadata]
