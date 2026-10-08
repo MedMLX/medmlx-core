@@ -40,6 +40,10 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = ["src/medmlx_core"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"licenses/MONAI_LICENSE" = "medmlx_core/licenses/MONAI_LICENSE"
+"THIRD_PARTY_NOTICES.md" = "medmlx_core/THIRD_PARTY_NOTICES.md"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-config --strict-markers"
