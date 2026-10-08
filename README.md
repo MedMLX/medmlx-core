@@ -148,5 +148,5 @@ weights and full-volume memory/performance are not qualified by these fixtures.
 
 ## License
 
-Proprietary until release review. The built wheel includes the upstream MONAI
+Apache-2.0; see [LICENSE](LICENSE). The built wheel includes the upstream MONAI
 license and existing third-party notices alongside the runtime modules.
