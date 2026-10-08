@@ -8,7 +8,8 @@ version = "0.1.1"
 description = "Shared MLX runtime for MedMLX model packages"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
-license = { text = "Proprietary" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/MONAI_LICENSE"]
 authors = [{ name = "Joseph Sandoval" }, { name = "Alfredo Sandoval Jr." }]
 dependencies = [
   "mlx>=0.32.2,<0.33; platform_system == 'Darwin' and platform_machine == 'arm64'",

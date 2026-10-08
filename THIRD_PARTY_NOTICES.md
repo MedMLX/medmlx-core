@@ -6,7 +6,7 @@
 Copyright (c) MONAI Consortium. Licensed under the Apache License, Version 2.0.
 The original license is preserved in `licenses/MONAI_LICENSE`.
 The NumPy/MLX implementation, restricted output/device API, and validation are
-modifications made in this extraction. Project metadata remains Proprietary;
+modifications made in this extraction and licensed under Apache-2.0;
 the upstream MONAI portions retain their Apache license.
 
 `src/medmlx_core/channel_last.py` retains layer arithmetic translated from

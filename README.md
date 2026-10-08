@@ -283,6 +283,6 @@ new helper's two passing Metal fixtures and the standalone network-window gates.
 
 ## License
 
-Proprietary until release review.
+Apache-2.0; see [LICENSE](LICENSE).
 The built wheel includes the complete upstream MONAI license and third-party
 notices alongside the runtime modules.
