@@ -10,6 +10,10 @@ Code belongs here only when two or more model packages use it. Model-specific co
 
     uv pip install "medmlx-core @ git+https://github.com/medmlx/medmlx-core.git"
 
+On Apple Silicon nothing else is needed. On Linux, MLX also needs a backend, so add one of the `cpu`, `cuda12`, or `cuda13` extras:
+
+    uv pip install "medmlx-core[cpu] @ git+https://github.com/medmlx/medmlx-core.git"
+
 ## License
 
 Proprietary until release review.
