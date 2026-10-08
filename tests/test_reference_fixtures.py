@@ -49,6 +49,14 @@ def test_missing_reference_fails_with_regeneration_hint():
         load_fixture("unrecorded-helper")
 
 
+def test_fixture_metadata_rejects_undeclared_fields():
+    metadata, _ = load_fixture("layout")
+    payload = json.loads(metadata.to_json())
+    payload["unexpected"] = "not part of the schema"
+    with pytest.raises(ValueError, match="undeclared fields"):
+        FixtureMetadata.from_json(json.dumps(payload))
+
+
 @given(st.text(), st.text())
 @settings(database=None)
 def test_reference_spec_round_trip(monai_version, torch_version):

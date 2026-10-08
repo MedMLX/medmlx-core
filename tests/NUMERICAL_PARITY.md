@@ -74,9 +74,30 @@ Additional bad coverage identified before editing:
 - Error cases in `test_upstream_outputs`, except GroupNorm divisibility: remove from this parametrization; host admission tests already exercise the exact same checks.
 - `test_renal_deconv2x_matches_torch_repeated`: rewrite using seeded small-channel weights at the same 48-cubed spatial size; an external model checkpoint is an unnecessary environment assumption. Exact signs near zero are not a valid FP32 helper contract.
 - `test_decoder_fusion_matches_torch_at_borders_and_singleton_axes`: retain its border/stride coverage, replace the loose 1e-4 budget with the interpolation budget.
-- Sliding-window tests selecting the MLX CPU backend: retain MONAI placement/blending coverage, execute the MLX predictor on Metal.
+- `test_scaled_window_settings_match_monai`: retain scaled ROI, batching and padding coverage; execute the MLX predictor on Metal.
+- `test_full_roi_window_settings_match_monai`: retain full-size ROI coverage; execute the MLX predictor on Metal.
+- `test_single_window_batch_matches_monai`: retain batch-size-one coverage; execute the MLX predictor on Metal without a bundle-specific override.
+- `test_cached_gaussian_map_and_coordinate_predictor_are_bitwise_equal`: retain cached-map/coordinate coverage; execute the MLX predictor on Metal.
+- `test_invalid_or_unimplemented_options_fail_before_prediction`: add CPU-device rejection; the host accumulator remains distinct from the predictor backend.
 - `test_unsupported_hosts_are_rejected`: strengthen the rejection property; an unsupported host must never load MLX.
-- Fixture provenance/parser tests: update to schema 2 and the single Mac recording directory, removing backend-key assumptions.
+- `test_every_archive_has_current_provenance_and_is_small`: require every archive to be a small upstream reference in the single Mac directory.
+- `test_fixture_metadata_round_trip`: round-trip schema 2 and the recording platform without backend selection.
+- `test_fixture_parser_accepts_typed_objects_or_raises_value_error`: require the constructed metadata to describe the one supported recording platform.
+- `test_import_does_not_load_mlx`: delete; its package-import check duplicates the blocked-framework test, while forced loading on attribute lookup is an incidental implementation detail.
+
+Earlier extraction tests were also replaced by independent contracts:
+
+- The original channel-last source-recording test now checks seeded PyTorch/MONAI layer outputs, full graphs and residual blocks.
+- The original snapshot-output test is now `test_upstream_outputs`; it uses independently recorded upstream arrays with explicit numerical budgets.
+- The original executable-definition test was deleted; textual identity to a recorded implementation says nothing about correct behavior.
+- Synthetic checkpoint mapping and optional Torch checkpoint tests now compare the original seeded host arrays and actual Torch save/load round trips.
+- Simulated Darwin readiness and peak-memory tests now check the documented host/API contract directly.
+- The original error-recording test was replaced by `test_shared_error_base`, `test_medmlx_error_is_the_real_public_base` and `test_error_metadata`.
+- `test_version` was replaced by `test_package_import_does_not_load_optional_frameworks`; a hardcoded version assertion adds no behavioral coverage.
+- `test_runtime_works_with_torch_and_monai_blocked` retains actual helper execution with conversion-only dependency admission.
+- `test_report_serializes_without_backend_objects` now isolates the report's JSON contract from the availability of a live Metal device.
+- `test_recorded_monai_scores_coordinates_and_labels` replaces frozen bundle outputs with actual MONAI stitching, coordinates and channel-index argmax; bundle class remaps and thresholds are outside this core helper.
+- `test_patch_dependent_blending_matches_monai`, `test_padding_values_and_crop_match_torch`, `test_predictor_weighting_precedes_accumulator_dtype_conversion` and `test_scalar_and_fallback_roi_match_monai` retain their properties; explicit tensor-type admission makes the upstream return contract clear.
 
 Channel-last stage coverage now feeds each layer its upstream stage input so
 its error is isolated from earlier layers. Full 2D/3D graphs and residual blocks

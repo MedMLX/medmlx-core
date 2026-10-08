@@ -1,5 +1,7 @@
 """Independent MONAI 1.6.0 references for placement, padding, and FP32 blending."""
 
+from typing import TypedDict
+
 import mlx.core as mx
 import numpy as np
 import pytest
@@ -21,6 +23,17 @@ from medmlx_core.sliding_window import (  # noqa: E402
     sliding_window_inference,
 )
 
+
+class WindowOptions(TypedDict, total=False):
+    overlap: float
+    mode: str
+    padding_mode: str
+    cval: float
+    sigma_scale: float
+    device: str
+    buffer_steps: int | None
+
+
 # Representative ROI/batch combinations; each is compared directly with MONAI.
 WINDOW_SETTINGS = [
     pytest.param((240, 240, 160), 1, 0.5, "constant", id="large_anisotropic"),
@@ -39,7 +52,7 @@ def mlx_predict(patch):
     anchor = patch[(slice(None), slice(0, 1), *(slice(0, 1),) * (patch.ndim - 2))]
     left, offset, right = patch * 0.5, anchor * 0.25, patch * -0.25
     mx.eval(left, offset, right)  # Separate multiply/add, like Torch eager execution.
-    return mx.concatenate((left + offset, right + 0.125), axis=1)
+    return mx.concatenate([left + offset, right + 0.125], axis=1)
 
 
 def assert_parity(actual, expected, *, exact=False):
@@ -62,10 +75,11 @@ def test_patch_dependent_blending_matches_monai(shape, roi, overlap, mode, sw_ba
     # Two images expose batch-crossing window groups; two channels expose channel placement.
     inputs = np.random.default_rng(1203).integers(-64, 65, (2, 2, *shape)).astype(np.float32) / 64
     original = inputs.copy()
-    options = dict(overlap=overlap, mode=mode, padding_mode="constant", cval=-0.25)
+    options: WindowOptions = dict(overlap=overlap, mode=mode, padding_mode="constant", cval=-0.25)
     expected = monai_inference(
         torch.from_numpy(inputs), roi, sw_batch_size, torch_predict, **options
     )
+    assert isinstance(expected, torch.Tensor)
     actual = sliding_window_inference(inputs, roi, sw_batch_size, mlx_predict, **options)
     assert_parity(actual, expected.numpy(), exact=mode == "constant")
     assert np.array_equal(inputs, original)
@@ -85,6 +99,7 @@ def test_padding_values_and_crop_match_torch(mode, cval):
     expected_logits = monai_inference(
         torch.from_numpy(inputs / 64), roi, 1, torch_predict, padding_mode=mode, cval=cval
     )
+    assert isinstance(expected_logits, torch.Tensor)
     actual = sliding_window_inference(
         inputs / 64, roi, 1, mlx_predict, padding_mode=mode, cval=cval
     )
@@ -136,7 +151,7 @@ def test_scaled_window_settings_match_monai(
     roi = tuple(size // 16 for size in full_roi)
     shape = tuple(size - 3 if smaller_than_roi else size * 2 + 1 for size in roi)
     inputs = np.random.default_rng(703).integers(-32, 33, (1, 1, *shape)).astype(np.float32) / 32
-    options = dict(
+    options: WindowOptions = dict(
         overlap=overlap,
         mode="constant",
         sigma_scale=0.125,
@@ -145,9 +160,11 @@ def test_scaled_window_settings_match_monai(
         device="cpu",
         buffer_steps=None,
     )
-    expected = monai_inference(
+    expected_tensor = monai_inference(
         torch.from_numpy(inputs), roi, sw_batch_size, torch_predict, **options
-    ).numpy()
+    )
+    assert isinstance(expected_tensor, torch.Tensor)
+    expected = expected_tensor.numpy()
     actual = sliding_window_inference(inputs, roi, sw_batch_size, mlx_predict, **options)
     assert_parity(actual, expected, exact=True)
 
@@ -169,10 +186,12 @@ def test_full_roi_window_settings_match_monai(roi, sw_batch_size, overlap, paddi
         mx.eval(result)
         return result + 0.125
 
-    options = dict(overlap=overlap, padding_mode=padding_mode, device="cpu")
-    expected = monai_inference(
+    options: WindowOptions = dict(overlap=overlap, padding_mode=padding_mode, device="cpu")
+    expected_tensor = monai_inference(
         torch.from_numpy(inputs), roi, sw_batch_size, predict_torch, **options
-    ).numpy()
+    )
+    assert isinstance(expected_tensor, torch.Tensor)
+    expected = expected_tensor.numpy()
     actual = sliding_window_inference(inputs, roi, sw_batch_size, predict_mlx, **options)
     assert_parity(actual, expected, exact=True)
 
@@ -181,8 +200,9 @@ def test_full_roi_window_settings_match_monai(roi, sw_batch_size, overlap, paddi
 def test_single_window_batch_matches_monai(overlap):
     inputs = np.random.default_rng(705).integers(-32, 33, (1, 1, 13, 11, 5))
     inputs = inputs.astype(np.float32) / 32
-    options = dict(overlap=overlap, device="cpu")
+    options: WindowOptions = dict(overlap=overlap, device="cpu")
     expected = monai_inference(torch.from_numpy(inputs), (6, 6, 6), 1, torch_predict, **options)
+    assert isinstance(expected, torch.Tensor)
     actual = sliding_window_inference(inputs, (6, 6, 6), 1, mlx_predict, **options)
     assert_parity(actual, expected.numpy(), exact=True)
 
@@ -209,22 +229,26 @@ def test_cached_gaussian_map_and_coordinate_predictor_are_bitwise_equal():
         mx.eval(result)
         return result + offsets + bias
 
-    options = dict(overlap=(0.5, 0.25), roi_weight_map=weight, with_coord=True)
     expected = monai_inference(
         torch.from_numpy(inputs),
         (6, 4),
         4,
         predict_torch,
-        **{**options, "roi_weight_map": torch.from_numpy(weight)},
+        overlap=(0.5, 0.25),
+        roi_weight_map=torch.from_numpy(weight),
+        with_coord=True,
         scale=0.5,
         bias=0.125,
     )
+    assert isinstance(expected, torch.Tensor)
     actual = sliding_window_inference(
         mx.array(inputs),
         (6, 4),
         4,
         predict_mlx,
-        **options,
+        overlap=(0.5, 0.25),
+        roi_weight_map=weight,
+        with_coord=True,
         scale=0.5,
         bias=0.125,
         device="cpu",
@@ -248,6 +272,7 @@ def test_predictor_weighting_precedes_accumulator_dtype_conversion(input_dtype, 
         lambda x: torch_predict(x).to(torch_dtype),
         roi_weight_map=torch.from_numpy(weight),
     )
+    assert isinstance(expected, torch.Tensor)
     actual = sliding_window_inference(
         inputs, (6, 4), 1, lambda x: mlx_predict(x).astype(mlx_dtype), roi_weight_map=weight
     )
@@ -258,6 +283,7 @@ def test_predictor_weighting_precedes_accumulator_dtype_conversion(input_dtype, 
 def test_scalar_and_fallback_roi_match_monai(roi):
     inputs = np.arange(35, dtype=np.float32).reshape(1, 1, 5, 7) / 64
     expected = monai_inference(torch.from_numpy(inputs), roi, 2, torch_predict, overlap=0.5)
+    assert isinstance(expected, torch.Tensor)
     actual = sliding_window_inference(inputs, roi, 2, mlx_predict, overlap=0.5)
     assert_parity(actual, expected.numpy(), exact=True)
 
@@ -289,6 +315,20 @@ def test_recorded_monai_scores_coordinates_and_labels(mode):
     # Background thresholds and external class-id remaps belong to model packages.
     labels = np.argmax(actual, axis=1)[:, None].astype(np.uint8)
     np.testing.assert_array_equal(labels, reference["labels"])
+
+
+@pytest.mark.parametrize("sw_device", [None, "gpu", mx.gpu, mx.Device(mx.gpu)])
+def test_gpu_device_forms_are_explicitly_admitted(
+    sw_device: mx.Device | mx.DeviceType | str | None,
+) -> None:
+    inputs = np.arange(12, dtype=np.float32).reshape(1, 1, 3, 4)
+
+    def predict(patch: mx.array) -> mx.array:
+        assert mx.default_device().type == mx.gpu
+        return patch
+
+    actual = sliding_window_inference(inputs, (2, 3), 2, predict, sw_device=sw_device)
+    assert np.array_equal(actual, inputs)
 
 
 @pytest.mark.parametrize(

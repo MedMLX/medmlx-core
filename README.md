@@ -38,7 +38,7 @@ version or source revision. Reference frameworks are absent from runtime imports
 
 | Module | API / independent reference |
 | --- | --- |
-| `runtime.py` | Host readiness, explicit backend selection, peak-memory counters; direct platform/API contract tests |
+| `runtime.py` | Host readiness, Metal admission and peak-memory counters; direct platform/API contract tests |
 | `errors.py` | Exception identity, messages and metadata; direct public contract tests |
 | `checkpoints.py`, `conversion.py` | Duplicate-safe host mappings and optional Torch deserialization; original seeded arrays and Torch save/load round trips |
 | `layout.py` | NCDHW/NDHWC, convolution-weight and token permutations; plain NumPy float64 reference |
@@ -136,10 +136,12 @@ Independent sliding-window tests retain exact comparison for representable
 constant-blending inputs, maximum absolute error 1e-6 for Gaussian logits and
 1e-7 for Gaussian maps because NumPy/Torch FP32 exponential kernels round differently.
 
-**Qualification:** The existing helper suite passes on Apple Silicon with
-MLX 0.32.3 on Metal. Results apply to the operation-specific bounds declared in
-`tests/numerical_contract.json`, including the cumulative graph budget. Reference
-arrays retain the independently recorded upstream outputs and provenance.
+**Qualification:** The reviewer ran the previous suite on Metal and reported
+159 passes, 35 failures from cross-framework bitwise arithmetic assertions and
+two skips. Those assertions and environment-dependent tests have been replaced;
+the revised numerical gates still require reviewer Metal verification. Host
+checks and reference generation do not qualify MLX execution. Reference arrays
+retain the independently recorded upstream outputs and provenance.
 
 Fixtures are synthetic helper references. Clinical accuracy, released model
 weights and full-volume memory/performance are not qualified by these fixtures.

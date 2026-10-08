@@ -50,7 +50,7 @@ def test_numerical_contract_round_trip(bound: float) -> None:
     assert parse_contract(json.dumps(payload)) == parsed
 
 
-@pytest.mark.parametrize("bound", [True, -1, float("nan"), float("inf"), "0", None])
+@pytest.mark.parametrize("bound", [True, -1, 10**400, float("nan"), float("inf"), "0", None])
 def test_invalid_numerical_bounds_fail_fast(bound: object) -> None:
     payload = json.loads(CONTRACT)
     payload["budgets"]["moments"]["atol"] = bound
@@ -61,6 +61,25 @@ def test_invalid_numerical_bounds_fail_fast(bound: object) -> None:
 def test_duplicate_contract_fields_are_rejected() -> None:
     with pytest.raises(ValueError, match="Duplicate numerical contract field"):
         parse_contract('{"schema_version": 1, "schema_version": 1}')
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", "true", "NaN", "Infinity"])
+def test_invalid_contract_payloads_raise_value_error(payload: str) -> None:
+    with pytest.raises(ValueError):
+        parse_contract(payload)
+
+
+@given(st.none() | st.booleans() | st.integers() | st.text() | st.lists(st.integers()))
+@settings(database=None)
+def test_budget_parser_constructs_valid_objects_or_raises_value_error(value: object) -> None:
+    payload = json.loads(CONTRACT)
+    payload["budgets"]["moments"]["atol"] = value
+    try:
+        budgets = parse_contract(json.dumps(payload))
+    except ValueError:
+        return
+    assert np.isfinite(budgets["moments"].atol)
+    assert budgets["moments"].atol >= 0
 
 
 def test_every_helper_has_an_explicit_budget() -> None:
