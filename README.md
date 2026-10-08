@@ -8,7 +8,7 @@ No model architectures, pretrained weights, image I/O, or model runners are incl
 ## Install and platform policy
 
 ```sh
-uv pip install "medmlx-core @ git+https://github.com/MedMLX/medmlx-core.git"
+uv pip install "medmlx-core @ git+https://github.com/MedMLX/medmlx-core.git@v0.1.2"
 ```
 
 Only macOS arm64 with MLX on Metal is supported. `import_mlx()` admits the host
