@@ -22,6 +22,7 @@ conversion = [
 dev = [
   "hypothesis>=6.140,<7",
   "monai==1.6.0",
+  "numpy>=2.2,<3",
   "pytest>=8.4,<10",
   "ruff>=0.13,<1",
   "torch==2.14.1",

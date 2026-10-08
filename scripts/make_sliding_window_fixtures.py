@@ -36,7 +36,10 @@ def main() -> None:
             padding_mode="replicate",
             with_coord=True,
         )
-        labels = AsDiscrete(argmax=True)(scores[0]).numpy().astype(np.uint8)[None]
+        assert isinstance(scores, torch.Tensor), "The fixture predictor returns one tensor"
+        discrete = AsDiscrete(argmax=True)(scores[0])
+        assert isinstance(discrete, torch.Tensor), "Tensor discretization preserves the tensor type"
+        labels = discrete.numpy().astype(np.uint8)[None]
         save_fixture(
             root,
             f"sliding_window_{mode}",

@@ -96,21 +96,29 @@ def reference(name: str, case: ArrayCase, arrays: dict[str, np.ndarray]) -> Any:
         high = np.float32(1e-5)
         return np.array([high, 1e-5 - np.float64(high)], dtype=np.float32)
     if name == "precision" and case.function == "_moments":
-        grouped = host[0].astype(np.float64).reshape(host[0].shape[0], -1)
+        source = host[0]
+        assert source is not None, "The moments case requires an input array"
+        grouped = source.astype(np.float64).reshape(source.shape[0], -1)
         return grouped.mean(axis=1).astype(np.float32), grouped.var(axis=1).astype(np.float32)
     args = [None if value is None else torch.from_numpy(value) for value in host]
     if name == "ops":
         return ops_reference(case, args)
+    x = args[0]
+    assert x is not None, "Tensor reference cases require an input tensor"
     if case.function == "deconv2x_ncdhw":
-        return F.conv_transpose3d(*args, stride=2)
+        weight = args[1]
+        assert weight is not None, "The deconvolution case requires a weight tensor"
+        return F.conv_transpose3d(x, weight, args[2], stride=2)
     if case.function == "upsample_add_ncdhw":
-        return (
-            F.interpolate(args[0], scale_factor=2, mode="trilinear", align_corners=False) + args[1]
-        )
+        skip = args[1]
+        assert skip is not None, "The upsample-add case requires a skip tensor"
+        return F.interpolate(x, scale_factor=2, mode="trilinear", align_corners=False) + skip
     if name == "precision" and case.function == "conv":
-        return F.conv3d(*args, **dict(case.kwargs))
+        weight = args[1]
+        assert weight is not None, "The convolution case requires a weight tensor"
+        return F.conv3d(x, weight, args[2], **dict(case.kwargs))
     if name == "precision" and case.function == "norm":
-        return F.group_norm(args[0], 1, *args[1:], eps=1e-5)
+        return F.group_norm(x, 1, args[1], args[2], eps=1e-5)
     raise ValueError(f"No reference for {name}.{case.function}")
 
 

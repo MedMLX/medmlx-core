@@ -63,7 +63,7 @@ def save_fixture(
         **details,
     }
     path = root / f"{name}.npz"
-    np.savez_compressed(path, metadata=np.array(json.dumps(metadata)), **arrays)
+    np.savez_compressed(path, allow_pickle=False, metadata=np.array(json.dumps(metadata)), **arrays)
     if path.stat().st_size >= 1_000_000:
         raise RuntimeError(f"Fixture exceeds 1 MB: {path}")
     print(f"{path}: {path.stat().st_size} bytes")

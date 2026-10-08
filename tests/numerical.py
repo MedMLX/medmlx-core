@@ -18,8 +18,16 @@ class NumericalBudget:
 
     def __post_init__(self) -> None:
         for value in (self.rtol, self.atol):
-            if type(value) not in (int, float) or not isfinite(value) or value < 0:
+            if type(value) not in (int, float) or value < 0:
                 raise ValueError("Numerical bounds must be finite nonnegative numbers")
+            try:
+                finite = isfinite(value)
+            except OverflowError as exc:
+                raise ValueError("Numerical bound exceeds floating-point range") from exc
+            if not finite:
+                raise ValueError("Numerical bounds must be finite nonnegative numbers")
+        object.__setattr__(self, "rtol", float(self.rtol))
+        object.__setattr__(self, "atol", float(self.atol))
         if not isinstance(self.reason, str) or not self.reason:
             raise ValueError("Numerical bounds require a reason")
 
