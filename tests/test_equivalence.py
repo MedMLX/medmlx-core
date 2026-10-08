@@ -7,13 +7,16 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 import pytest
-from fixture_cases import definitions, outcome, run_array_case
+from fixture_cases import REFERENCE_BACKEND, backend_key, definitions, outcome, run_array_case
 
 FIXTURES = Path(__file__).parent / 'fixtures'
+BACKEND = backend_key(mx)
+BACKEND_FIXTURES = FIXTURES if BACKEND == REFERENCE_BACKEND else FIXTURES / BACKEND
 
 
-def load_fixture(name):
-    with np.load(FIXTURES / f'{name}.npz', allow_pickle=False) as archive:
+def load_fixture(name, *, backend=False):
+    root = BACKEND_FIXTURES if backend else FIXTURES
+    with np.load(root / f'{name}.npz', allow_pickle=False) as archive:
         arrays = {key: archive[key] for key in archive.files if key != 'metadata'}
         metadata = json.loads(str(archive['metadata']))
     assert metadata['radnn_commit'] == 'cbaa1ac'
@@ -30,7 +33,10 @@ ARRAY_CASES = [
 @pytest.mark.parametrize(('name', 'case'), ARRAY_CASES,
                          ids=[f'{name}.{case["id"]}' for name, case in ARRAY_CASES])
 def test_snapshot_outputs(name, case):
-    _, arrays = load_fixture(name)
+    if not (BACKEND_FIXTURES / f'{name}.npz').exists():
+        pytest.skip(f'No RadNN snapshot recording for {BACKEND}')
+    metadata, arrays = load_fixture(name, backend=True)
+    case = next(recorded for recorded in metadata['cases'] if recorded['id'] == case['id'])
     module = importlib.import_module(f'medmlx_core.{name}')
     actual = outcome(lambda: run_array_case(module, case, arrays, mx), mx)
     values = actual.pop('arrays', [])

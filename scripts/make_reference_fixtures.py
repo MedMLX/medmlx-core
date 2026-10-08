@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import json
 import sys
@@ -16,9 +17,11 @@ import torch
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'tests'))
 from fixture_cases import (  # noqa: E402
+    REFERENCE_BACKEND,
     SNAPSHOT,
     SOURCES,
     array_cases,
+    backend_key,
     darwin_contracts,
     definitions,
     error_contracts,
@@ -46,6 +49,13 @@ def reference(name: str):
 
 
 def main() -> None:
+    global FIXTURES
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args()
+    if str(SNAPSHOT) not in sys.path:
+        sys.path.insert(0, str(SNAPSHOT))
+    if (key := backend_key(mx)) != REFERENCE_BACKEND:
+        FIXTURES = FIXTURES / key
     FIXTURES.mkdir(parents=True, exist_ok=True)
     modules = {name: reference(name) for name in SOURCES}
     arrays, cases = array_cases()

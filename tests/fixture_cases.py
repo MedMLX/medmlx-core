@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import os
+import platform
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +12,15 @@ from typing import Any
 
 import numpy as np
 
-SNAPSHOT = Path('/home/alif/Documents/GitHub/.medmlx-extract/radnn-cbaa1ac')
+SNAPSHOT = Path(os.environ.get(
+    'MEDMLX_RADNN_SNAPSHOT', '/home/alif/Documents/GitHub/.medmlx-extract/radnn-cbaa1ac'))
+# Bitwise outputs differ across backends by float32 rounding, so each backend has its
+# own snapshot recording. The original Linux CPU recording sits at the fixture root.
+REFERENCE_BACKEND = 'linux-x86_64-cpu'
+
+
+def backend_key(mx: Any) -> str:
+    return f"{platform.system().lower()}-{platform.machine()}-{mx.default_device().type.name}"
 SOURCES = {
     'runtime': 'radnn/runtime/mlx.py',
     'precision': 'radnn/runtime/mlx_precision.py',
