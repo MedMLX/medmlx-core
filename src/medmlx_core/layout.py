@@ -49,10 +49,7 @@ def conv_transpose3d_weight_to_mlx(weight: Any, mx: Any) -> Any:
     """Torch conv_transpose3d weight [I, O, KD, KH, KW] → MLX [O, KD, KH, KW, I]."""
 
     if int(weight.ndim) != 5:
-        raise ValueError(
-            "conv_transpose3d weight must be rank-5 [I,O,K]; "
-            f"got ndim={weight.ndim}"
-        )
+        raise ValueError(f"conv_transpose3d weight must be rank-5 [I,O,K]; got ndim={weight.ndim}")
     return mx.transpose(weight, (1, 2, 3, 4, 0))
 
 

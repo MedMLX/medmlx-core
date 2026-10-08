@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def test_runtime_works_with_radnn_torch_and_monai_blocked():
-    code = '''
+    code = """
 import importlib.abc
 import sys
 
@@ -32,10 +32,14 @@ except core.MissingDependencyError as exc:
     assert str(exc) == 'Checkpoint conversion requires torch to unpickle the source files'
 else:
     raise AssertionError('conversion must require optional torch')
-'''
+"""
     repo = Path(__file__).resolve().parents[1]
     completed = subprocess.run(
-        [sys.executable, '-c', code], cwd=repo, check=False, capture_output=True, text=True,
-        env={**os.environ, 'PYTHONPATH': str(repo / 'src'), 'PYTHONDONTWRITEBYTECODE': '1'},
+        [sys.executable, "-c", code],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(repo / "src"), "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr

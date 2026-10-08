@@ -118,10 +118,10 @@ No `conversion` extra is needed here.
 from medmlx_core.sliding_window import sliding_window_inference
 
 logits = sliding_window_inference(
-    image,                    ### NumPy or MLX (N, C, *spatial), float32/float16
+    image,  ### NumPy or MLX (N, C, *spatial), float32/float16
     roi_size=(128, 128, 128),
     sw_batch_size=1,
-    predictor=network,         ### MLX array -> MLX array, same spatial resolution
+    predictor=network,  ### MLX array -> MLX array, same spatial resolution
     overlap=0.25,
     mode="constant",
     padding_mode="replicate",

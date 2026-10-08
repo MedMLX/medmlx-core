@@ -130,9 +130,7 @@ def split_conv3d_ncdhw(
 
     return _split_convolution_ncdhw(
         array,
-        apply=lambda chunk: convolution(
-            chunk, weight, bias, padding=padding, stride=stride, mx=mx
-        ),
+        apply=lambda chunk: convolution(chunk, weight, bias, padding=padding, stride=stride, mx=mx),
         stride=stride,
         num_splits=num_splits,
         dim_split=dim_split,
@@ -193,9 +191,7 @@ def _split_convolution_ncdhw(
     length = int(array.shape[axis])
     split_size = length // num_splits
     if split_size < 1:
-        raise ValueError(
-            f"{name} length {length} is smaller than num_splits {num_splits}"
-        )
+        raise ValueError(f"{name} length {length} is smaller than num_splits {num_splits}")
     overlap = 3
     if overlap % stride > 0:
         overlap = (overlap // stride + 1) * stride
@@ -225,9 +221,7 @@ def _split_convolution_ncdhw(
         if index == 0:
             cropped.append(_slice_axis(output, axis, 0, out_split))
         else:
-            cropped.append(
-                _slice_axis(output, axis, out_overlap, out_overlap + out_split)
-            )
+            cropped.append(_slice_axis(output, axis, out_overlap, out_overlap + out_split))
     return mx.concatenate(cropped, axis=axis)
 
 
@@ -266,9 +260,9 @@ def upsample_trilinear_ncdhw(array: Any, *, mx: Any, scale: int = 2) -> Any:
     require_ncdhw(array, name="trilinear upsample input")
     mlx_nn = importlib.import_module("mlx.nn")
 
-    upsampled = mlx_nn.Upsample(
-        scale_factor=scale, mode="linear", align_corners=False
-    )(to_ndhwc(array, mx))
+    upsampled = mlx_nn.Upsample(scale_factor=scale, mode="linear", align_corners=False)(
+        to_ndhwc(array, mx)
+    )
     return to_ncdhw(upsampled, mx)
 
 

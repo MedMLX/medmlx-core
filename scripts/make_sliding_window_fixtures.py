@@ -15,9 +15,7 @@ from monai.inferers.utils import sliding_window_inference
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--radnn-snapshot", type=Path, required=True
-    )
+    parser.add_argument("--radnn-snapshot", type=Path, required=True)
     parser.add_argument(
         "--output-dir", type=Path, default=Path(__file__).resolve().parents[1] / "tests/fixtures"
     )

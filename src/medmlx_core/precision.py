@@ -209,15 +209,25 @@ class Float32Operators:
         return self.kernels[name](
             inputs=inputs,
             template=list(constants.items()),
-            grid=((512, (shape[0] * math.prod(shape[2:]) + 127) // 128, (shape[1] + 31) // 32)
-                  if name == "conv" else (math.prod(shape), 1, 1)),
+            grid=(
+                (512, (shape[0] * math.prod(shape[2:]) + 127) // 128, (shape[1] + 31) // 32)
+                if name == "conv"
+                else (math.prod(shape), 1, 1)
+            ),
             threadgroup=(512 if name == "conv" else 256, 1, 1),
             output_shapes=[shape] * len(_SOURCES[name][1]),
             output_dtypes=[self.mx.float32] * len(_SOURCES[name][1]),
         )
 
-    def conv(self, values: Any, weight: Any, bias: Any | None, *,
-        padding: int | tuple[int, int, int], stride: int | tuple[int, int, int]) -> Any:
+    def conv(
+        self,
+        values: Any,
+        weight: Any,
+        bias: Any | None,
+        *,
+        padding: int | tuple[int, int, int],
+        stride: int | tuple[int, int, int],
+    ) -> Any:
         mx = self.mx
         pads = (padding,) * 3 if isinstance(padding, int) else padding
         steps = (stride,) * 3 if isinstance(stride, int) else stride

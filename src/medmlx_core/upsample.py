@@ -122,8 +122,7 @@ def deconv2x_ncdhw(values: Any, weight: Any, bias: Any | None, *, mx: Any) -> An
             f"{tuple(weight.shape)}; expected {expected_weight_shape}"
         )
     if bias is not None and (
-        bias.dtype != mx.float32
-        or tuple(int(size) for size in bias.shape) != (out_channels,)
+        bias.dtype != mx.float32 or tuple(int(size) for size in bias.shape) != (out_channels,)
     ):
         raise ValueError(
             "SegResNet decoder deconvolution bias must have shape "
@@ -137,9 +136,7 @@ def deconv2x_ncdhw(values: Any, weight: Any, bias: Any | None, *, mx: Any) -> An
         for phase_height in range(2)
         for phase_width in range(2)
     ]
-    packed = mx.stack(phases, axis=-2).reshape(
-        n, depth, height, width, 2, 2, 2, out_channels
-    )
+    packed = mx.stack(phases, axis=-2).reshape(n, depth, height, width, 2, 2, 2, out_channels)
     output = mx.transpose(packed, (0, 7, 1, 4, 2, 5, 3, 6)).reshape(
         n, out_channels, 2 * depth, 2 * height, 2 * width
     )
