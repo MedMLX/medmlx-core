@@ -53,6 +53,9 @@ Inference helpers run on Metal. Model topology, checkpoint keys, label meanings 
 pre/postprocessing belong to each model package. Channel-last references use the
 core's MONAI 1.6.0 pin; they do not qualify consumer models pinned to another release.
 
+See the [decoder note](docs/transpose-convolution.md) for stride-2 transpose-convolution
+dispatch and the upstream reproducer.
+
 ## Sliding-window inference
 
 ```python
