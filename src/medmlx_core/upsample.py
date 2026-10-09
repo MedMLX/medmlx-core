@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from functools import cache
 from math import prod
-from typing import Any
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from mlx.core import array as Array
 
 from medmlx_core.layout import require_ncdhw
+from medmlx_core.typing import MetalKernel, MlxRuntime
 
 # Half-pixel coordinates implement PyTorch align_corners=False interpolation.
 _SOURCE = """
@@ -62,19 +66,22 @@ out[idx] = value + skip[s];
 
 
 @cache
-def _kernel(mx: Any) -> Any:
-    return mx.fast.metal_kernel(
-        name="medmlx_segresnet_trilinear2x_add",
-        input_names=["x", "skip"],
-        output_names=["out"],
-        source=_SOURCE,
-        header="#pragma clang fp contract(off)\n",
-        ensure_row_contiguous=False,
-        compile_options={"math_mode": "safe"},
+def _kernel(mx: MlxRuntime) -> MetalKernel:
+    return cast(
+        MetalKernel,
+        mx.fast.metal_kernel(
+            name="medmlx_segresnet_trilinear2x_add",
+            input_names=["x", "skip"],
+            output_names=["out"],
+            source=_SOURCE,
+            header="#pragma clang fp contract(off)\n",
+            ensure_row_contiguous=False,
+            compile_options={"math_mode": "safe"},
+        ),
     )
 
 
-def upsample_add_ncdhw(values: Any, skip: Any, *, mx: Any) -> Any:
+def upsample_add_ncdhw(values: Array, skip: Array, *, mx: MlxRuntime) -> Array:
     """Fuse align_corners=False 2x interpolation and skip addition on Metal."""
     require_ncdhw(values, name="decoder input")
     require_ncdhw(skip, name="decoder skip")
@@ -100,7 +107,7 @@ def upsample_add_ncdhw(values: Any, skip: Any, *, mx: Any) -> Any:
     )[0]
 
 
-def deconv2x_ncdhw(values: Any, weight: Any, bias: Any | None, *, mx: Any) -> Any:
+def deconv2x_ncdhw(values: Array, weight: Array, bias: Array | None, *, mx: MlxRuntime) -> Array:
     """Exact 2x NCDHW transposed convolution using eight MLX matmul phases.
 
     This covers the pinned SegResNet decoder configuration only: groups=1,
@@ -136,8 +143,9 @@ def deconv2x_ncdhw(values: Any, weight: Any, bias: Any | None, *, mx: Any) -> An
         for phase_height in range(2)
         for phase_width in range(2)
     ]
-    packed = mx.stack(phases, axis=-2).reshape(n, depth, height, width, 2, 2, 2, out_channels)
-    output = mx.transpose(packed, (0, 7, 1, 4, 2, 5, 3, 6)).reshape(
-        n, out_channels, 2 * depth, 2 * height, 2 * width
+    packed = mx.reshape(mx.stack(phases, axis=-2), (n, depth, height, width, 2, 2, 2, out_channels))
+    output = mx.reshape(
+        mx.transpose(packed, (0, 7, 1, 4, 2, 5, 3, 6)),
+        (n, out_channels, 2 * depth, 2 * height, 2 * width),
     )
-    return output if bias is None else output + bias.reshape(1, out_channels, 1, 1, 1)
+    return output if bias is None else output + mx.reshape(bias, (1, out_channels, 1, 1, 1))

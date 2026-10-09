@@ -15,7 +15,7 @@ from medmlx_core import errors
         ("AssetNotReadyError", FileNotFoundError),
     ],
 )
-def test_shared_error_base(name, builtin):
+def test_shared_error_base(name: str, builtin: type[Exception]) -> None:
     cls = getattr(errors, name)
     exc = cls("message")
     assert isinstance(exc, errors.MedmlxError)
@@ -25,7 +25,7 @@ def test_shared_error_base(name, builtin):
     assert str(exc) == "message"
 
 
-def test_medmlx_error_is_the_real_public_base():
+def test_medmlx_error_is_the_real_public_base() -> None:
     assert errors.MedmlxError.__name__ == "MedmlxError"
     assert errors.MedmlxError.__bases__ == (Exception,)
     assert medmlx_core.MedmlxError is errors.MedmlxError
@@ -33,7 +33,7 @@ def test_medmlx_error_is_the_real_public_base():
     assert str(errors.MedmlxError("message", "detail")) == "('message', 'detail')"
 
 
-def test_error_metadata():
+def test_error_metadata() -> None:
     missing = errors.MissingDependencyError(
         "missing", extra="conversion", hint="install conversion"
     )

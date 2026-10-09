@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import math
 import struct
+from collections.abc import Sequence
 from itertools import count
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 # MLX's standard convolutions/reductions do not expose these accumulation orders.
+
+if TYPE_CHECKING:
+    from mlx.core import array as Array
+
+from medmlx_core.typing import MetalKernel, MlxRuntime
+
 _KERNEL_NAMESPACES = count()
 
 _SOURCES = {
@@ -185,7 +192,7 @@ for (uint i = tid; i < 4096; i += 512) {
 class Float32Operators:
     """Tiled ordered convolution FMA and bounded four-lane Welford moments."""
 
-    def __init__(self, mx: Any, groups: int, eps: float) -> None:
+    def __init__(self, mx: MlxRuntime, groups: int, eps: float) -> None:
         self.mx = mx
         self.groups = groups
         namespace = next(_KERNEL_NAMESPACES)
@@ -193,19 +200,22 @@ class Float32Operators:
         high = struct.unpack("f", struct.pack("f", eps))[0]
         self.eps = mx.array([high, eps - high], dtype=mx.float32)
         self.kernels = {
-            name: mx.fast.metal_kernel(
-                name=f"medmlx_float32_packed_{namespace}_{name}",
-                input_names=inputs,
-                output_names=outputs,
-                source=source,
-                header="#include <metal_simdgroup_matrix>\n#pragma clang fp contract(off)\n",
+            name: cast(
+                MetalKernel,
+                mx.fast.metal_kernel(
+                    name=f"medmlx_float32_packed_{namespace}_{name}",
+                    input_names=inputs,
+                    output_names=outputs,
+                    source=source,
+                    header="#include <metal_simdgroup_matrix>\n#pragma clang fp contract(off)\n",
+                ),
             )
             for name, (inputs, outputs, source) in _SOURCES.items()
         }
 
     def _run(
-        self, name: str, inputs: list[Any], shape: tuple[int, ...], **constants: int
-    ) -> list[Any]:
+        self, name: str, inputs: list[Array], shape: tuple[int, ...], **constants: int
+    ) -> list[Array]:
         return self.kernels[name](
             inputs=inputs,
             template=list(constants.items()),
@@ -221,13 +231,13 @@ class Float32Operators:
 
     def conv(
         self,
-        values: Any,
-        weight: Any,
-        bias: Any | None,
+        values: Array,
+        weight: Array,
+        bias: Array | None,
         *,
-        padding: int | tuple[int, int, int],
-        stride: int | tuple[int, int, int],
-    ) -> Any:
+        padding: int | Sequence[int],
+        stride: int | Sequence[int],
+    ) -> Array:
         mx = self.mx
         pads = (padding,) * 3 if isinstance(padding, int) else padding
         steps = (stride,) * 3 if isinstance(stride, int) else stride
@@ -242,7 +252,7 @@ class Float32Operators:
         initial = mx.zeros((out_channels,), dtype=mx.float32) if bias is None else bias
         return self._run(
             "conv",
-            [padded, weight.transpose(1, 2, 3, 4, 0), initial],
+            [padded, mx.transpose(weight, (1, 2, 3, 4, 0)), initial],
             (batch, out_channels, *spatial),
             BATCH=batch,
             CI=channels,
@@ -261,7 +271,7 @@ class Float32Operators:
             XP=int(padded.shape[4]),
         )[0]
 
-    def _moments(self, values: Any) -> tuple[Any, Any]:
+    def _moments(self, values: Array) -> tuple[Array, Array]:
         groups = int(values.shape[0]) * self.groups
         size = int(values.size) // groups
         vectors = size // 4
@@ -270,7 +280,7 @@ class Float32Operators:
             "tile", [values], (groups, tiles, 4), GROUPS=groups, TILES=tiles, N=size
         )
         count = 16
-        remainders: list[tuple[Any, Any, int]] = []
+        remainders: list[tuple[Array, Array, int]] = []
         # Keep the rightmost partial blocks in ascending order, as in MONAI's CPU reference.
         while tiles > 1:
             if tiles % 2:
@@ -307,7 +317,7 @@ class Float32Operators:
         )
         return mean, variance
 
-    def norm(self, values: Any, weight: Any, bias: Any) -> Any:
+    def norm(self, values: Array, weight: Array, bias: Array) -> Array:
         mean, variance = self._moments(values)
         batch, channels = map(int, values.shape[:2])
         scale, offset = self._run(

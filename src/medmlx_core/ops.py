@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from mlx.core import array as Array
 
 from medmlx_core.layout import (
     conv3d_weight_to_mlx,
@@ -13,21 +16,23 @@ from medmlx_core.layout import (
     to_ncdhw,
     to_ndhwc,
 )
+from medmlx_core.typing import ArrayFactory, HostArray, MlxRuntime
 
 
-def as_fp32(array: Any, mx: Any) -> Any:
+def as_fp32(array: Array | HostArray, mx: MlxRuntime) -> Array:
     """Copy a host or device array to MLX as float32."""
 
-    return mx.array(array, dtype=mx.float32)
+    make_array = cast(ArrayFactory, mx.array)
+    return make_array(array, dtype=mx.float32)
 
 
-def silu(array: Any, mx: Any) -> Any:
+def silu(array: Array, mx: MlxRuntime) -> Array:
     """SiLU, matching ``torch.nn.SiLU`` / MONAI ``Swish(alpha=1)``."""
 
     return array * mx.sigmoid(array)
 
 
-def linear(array: Any, weight: Any, bias: Any | None, mx: Any) -> Any:
+def linear(array: Array, weight: Array, bias: Array | None, mx: MlxRuntime) -> Array:
     """``x @ W.T + b`` with Torch/MLX layout ``[out, in]``."""
 
     output = array @ mx.swapaxes(weight, 0, 1)
@@ -37,14 +42,14 @@ def linear(array: Any, weight: Any, bias: Any | None, mx: Any) -> Any:
 
 
 def group_norm_ncdhw(
-    array: Any,
-    weight: Any,
-    bias: Any,
+    array: Array,
+    weight: Array,
+    bias: Array,
     *,
     num_groups: int,
     eps: float,
-    mx: Any,
-) -> Any:
+    mx: MlxRuntime,
+) -> Array:
     """NCDHW GroupNorm matching ``mlx.nn.GroupNorm(..., pytorch_compatible=True)``."""
 
     require_ncdhw(array, name="group_norm input")
@@ -67,14 +72,14 @@ def group_norm_ncdhw(
 
 
 def conv3d_ncdhw(
-    array: Any,
-    weight: Any,
-    bias: Any | None,
+    array: Array,
+    weight: Array,
+    bias: Array | None,
     *,
     padding: int,
-    mx: Any,
+    mx: MlxRuntime,
     stride: int = 1,
-) -> Any:
+) -> Array:
     """NCDHW conv3d: NDHWC call, Torch weight remap, NCDHW return."""
 
     require_ncdhw(array, name="conv3d input")
@@ -90,15 +95,15 @@ def conv3d_ncdhw(
 
 
 def conv_transpose3d_ncdhw(
-    array: Any,
-    weight: Any,
-    bias: Any | None,
+    array: Array,
+    weight: Array,
+    bias: Array | None,
     *,
     padding: int,
     output_padding: int,
-    mx: Any,
+    mx: MlxRuntime,
     stride: int = 1,
-) -> Any:
+) -> Array:
     """NCDHW conv_transpose3d using Torch weight layout ``[I, O, K]``."""
 
     require_ncdhw(array, name="conv_transpose3d input")
@@ -115,17 +120,17 @@ def conv_transpose3d_ncdhw(
 
 
 def split_conv3d_ncdhw(
-    array: Any,
-    weight: Any,
-    bias: Any | None,
+    array: Array,
+    weight: Array,
+    bias: Array | None,
     *,
     padding: int,
-    mx: Any,
+    mx: MlxRuntime,
     stride: int = 1,
     num_splits: int = 1,
     dim_split: int = 1,
-    convolution: Callable[..., Any] = conv3d_ncdhw,
-) -> Any:
+    convolution: Callable[..., Array] = conv3d_ncdhw,
+) -> Array:
     """MaisiConvolution: one conv, or overlap-split along NCDHW axis ``dim_split+2``."""
 
     return _split_convolution_ncdhw(
@@ -140,17 +145,17 @@ def split_conv3d_ncdhw(
 
 
 def split_conv_transpose3d_ncdhw(
-    array: Any,
-    weight: Any,
-    bias: Any | None,
+    array: Array,
+    weight: Array,
+    bias: Array | None,
     *,
     padding: int,
     output_padding: int,
-    mx: Any,
+    mx: MlxRuntime,
     stride: int = 1,
     num_splits: int = 1,
     dim_split: int = 1,
-) -> Any:
+) -> Array:
     """Split/stitch MAISI ConvTranspose3d along one spatial axis."""
 
     return _split_convolution_ncdhw(
@@ -173,15 +178,15 @@ def split_conv_transpose3d_ncdhw(
 
 
 def _split_convolution_ncdhw(
-    array: Any,
+    array: Array,
     *,
-    apply: Callable[[Any], Any],
+    apply: Callable[[Array], Array],
     stride: int,
     num_splits: int,
     dim_split: int,
     name: str,
-    mx: Any,
-) -> Any:
+    mx: MlxRuntime,
+) -> Array:
     require_ncdhw(array, name=f"{name} input")
     if num_splits <= 1:
         return apply(array)
@@ -196,7 +201,7 @@ def _split_convolution_ncdhw(
     if overlap % stride > 0:
         overlap = (overlap // stride + 1) * stride
     remainder = length % split_size
-    chunks: list[Any] = []
+    chunks: list[Array] = []
     for index in range(num_splits):
         start = 0 if index == 0 else index * split_size - overlap
         extra = remainder if index == num_splits - 1 else overlap
@@ -216,7 +221,7 @@ def _split_convolution_ncdhw(
     elif out_other > 0 and in_other // out_other == 2:
         out_split //= 2
         out_overlap //= 2
-    cropped: list[Any] = []
+    cropped: list[Array] = []
     for index, output in enumerate(outputs):
         if index == 0:
             cropped.append(_slice_axis(output, axis, 0, out_split))
@@ -225,24 +230,29 @@ def _split_convolution_ncdhw(
     return mx.concatenate(cropped, axis=axis)
 
 
-def _slice_axis(array: Any, axis: int, start: int, end: int) -> Any:
+def _slice_axis(array: Array, axis: int, start: int, end: int) -> Array:
     slices: list[slice] = [slice(None)] * 5
     slices[axis] = slice(start, end)
     return array[tuple(slices)]
 
 
-def avg_pool3d_ncdhw(array: Any, *, mx: Any, kernel_size: int = 2, stride: int = 2) -> Any:
+def avg_pool3d_ncdhw(
+    array: Array, *, mx: MlxRuntime, kernel_size: int = 2, stride: int = 2
+) -> Array:
     """NCDHW AvgPool3d matching ``mlx.nn.AvgPool3d`` / Torch ``AvgPool3d(2)``."""
 
     require_ncdhw(array, name="avg pool input")
     spatial = to_ndhwc(array, mx)
     mlx_nn = importlib.import_module("mlx.nn")
 
-    pooled = mlx_nn.AvgPool3d(kernel_size=kernel_size, stride=stride)(spatial)
+    pool = cast(
+        "Callable[[Array], Array]", mlx_nn.AvgPool3d(kernel_size=kernel_size, stride=stride)
+    )
+    pooled = pool(spatial)
     return to_ncdhw(pooled, mx)
 
 
-def upsample_nearest_ncdhw(array: Any, *, mx: Any, scale: int = 2) -> Any:
+def upsample_nearest_ncdhw(array: Array, *, mx: MlxRuntime, scale: int = 2) -> Array:
     """NCDHW nearest x scale. Same as ``mlx.nn.Upsample(..., mode='nearest')``."""
 
     require_ncdhw(array, name="nearest upsample input")
@@ -254,26 +264,28 @@ def upsample_nearest_ncdhw(array: Any, *, mx: Any, scale: int = 2) -> Any:
     return output
 
 
-def upsample_trilinear_ncdhw(array: Any, *, mx: Any, scale: int = 2) -> Any:
+def upsample_trilinear_ncdhw(array: Array, *, mx: MlxRuntime, scale: int = 2) -> Array:
     """NCDHW trilinear x scale, ``align_corners=False`` (Torch interpolate default)."""
 
     require_ncdhw(array, name="trilinear upsample input")
     mlx_nn = importlib.import_module("mlx.nn")
 
-    upsampled = mlx_nn.Upsample(scale_factor=scale, mode="linear", align_corners=False)(
-        to_ndhwc(array, mx)
+    upsample = cast(
+        "Callable[[Array], Array]",
+        mlx_nn.Upsample(scale_factor=scale, mode="linear", align_corners=False),
     )
+    upsampled = upsample(to_ndhwc(array, mx))
     return to_ncdhw(upsampled, mx)
 
 
-def pad_spatial_trailing_ncdhw(array: Any, mx: Any) -> Any:
+def pad_spatial_trailing_ncdhw(array: Array, mx: MlxRuntime) -> Array:
     """``F.pad(x, (0, 1) * 3)``: add one voxel on the high side of D, H, W."""
 
     require_ncdhw(array, name="spatial pad input")
     return mx.pad(array, [(0, 0), (0, 0), (0, 1), (0, 1), (0, 1)])
 
 
-def concat_channels_ncdhw(left: Any, right: Any, mx: Any) -> Any:
+def concat_channels_ncdhw(left: Array, right: Array, mx: MlxRuntime) -> Array:
     """Skip-concat on NCDHW channel axis 1."""
 
     require_ncdhw(left, name="skip concat left")

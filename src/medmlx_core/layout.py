@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from mlx.core import array as Array
+
+from medmlx_core.typing import MlxRuntime
 
 LAYOUT_NCDHW = "maisi.layout.ncdhw"
 LAYOUT_TO_NDHWC = "maisi.layout.to_ndhwc"
@@ -18,26 +23,31 @@ IDENTITY_WEIGHT_LAYOUTS = frozenset(
 )
 
 
-def require_ncdhw(array: Any, *, name: str) -> None:
+class RankedArray(Protocol):
+    @property
+    def ndim(self) -> int: ...
+
+
+def require_ncdhw(array: RankedArray, *, name: str) -> None:
     """Raise if *array* is not a rank-5 NCDHW tensor."""
 
     if int(array.ndim) != 5:
         raise ValueError(f"{name} must be NCDHW rank-5; got ndim={array.ndim}")
 
 
-def to_ndhwc(array: Any, mx: Any) -> Any:
+def to_ndhwc(array: Array, mx: MlxRuntime) -> Array:
     """NCDHW → NDHWC at a conv/norm call."""
 
     return mx.transpose(array, (0, 2, 3, 4, 1))
 
 
-def to_ncdhw(array: Any, mx: Any) -> Any:
+def to_ncdhw(array: Array, mx: MlxRuntime) -> Array:
     """NDHWC → NCDHW after a conv/norm call."""
 
     return mx.transpose(array, (0, 4, 1, 2, 3))
 
 
-def conv3d_weight_to_mlx(weight: Any, mx: Any) -> Any:
+def conv3d_weight_to_mlx(weight: Array, mx: MlxRuntime) -> Array:
     """Torch conv3d weight [O, I, KD, KH, KW] → MLX [O, KD, KH, KW, I]."""
 
     if int(weight.ndim) != 5:
@@ -45,7 +55,7 @@ def conv3d_weight_to_mlx(weight: Any, mx: Any) -> Any:
     return mx.transpose(weight, (0, 2, 3, 4, 1))
 
 
-def conv_transpose3d_weight_to_mlx(weight: Any, mx: Any) -> Any:
+def conv_transpose3d_weight_to_mlx(weight: Array, mx: MlxRuntime) -> Array:
     """Torch conv_transpose3d weight [I, O, KD, KH, KW] → MLX [O, KD, KH, KW, I]."""
 
     if int(weight.ndim) != 5:
@@ -53,7 +63,7 @@ def conv_transpose3d_weight_to_mlx(weight: Any, mx: Any) -> Any:
     return mx.transpose(weight, (1, 2, 3, 4, 0))
 
 
-def tokens_from_ncdhw(array: Any, mx: Any) -> Any:
+def tokens_from_ncdhw(array: Array, mx: MlxRuntime) -> Array:
     """NCDHW [B,C,D,H,W] → tokens [B, D*H*W, C]."""
 
     require_ncdhw(array, name="attention input")
@@ -62,7 +72,9 @@ def tokens_from_ncdhw(array: Any, mx: Any) -> Any:
     return mx.transpose(flat, (0, 2, 1))
 
 
-def tokens_to_ncdhw(tokens: Any, spatial: tuple[int, int, int, int, int], mx: Any) -> Any:
+def tokens_to_ncdhw(
+    tokens: Array, spatial: tuple[int, int, int, int, int], mx: MlxRuntime
+) -> Array:
     """Tokens [B, N, C] → NCDHW *spatial*."""
 
     batch, channels, depth, height, width = spatial

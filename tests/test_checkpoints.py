@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 from fixture_cases import array_cases
@@ -11,7 +13,7 @@ from medmlx_core.checkpoints import (
 from medmlx_core.errors import InvalidInputError
 
 
-def test_synthetic_weight_mapping_preserves_host_arrays():
+def test_synthetic_weight_mapping_preserves_host_arrays() -> None:
     inputs, _ = array_cases()
     host = inputs["linear_w"].astype(np.float64)
     torch = pytest.importorskip("torch")
@@ -36,7 +38,9 @@ def test_synthetic_weight_mapping_preserves_host_arrays():
 
 
 @pytest.mark.parametrize("weights_only", [False, True])
-def test_optional_torch_checkpoint_preserves_host_arrays(tmp_path, weights_only):
+def test_optional_torch_checkpoint_preserves_host_arrays(
+    tmp_path: Path, weights_only: bool
+) -> None:
     inputs, _ = array_cases()
     host = inputs["linear_w"].astype(np.float64)
     torch = pytest.importorskip("torch")
@@ -57,7 +61,7 @@ def test_optional_torch_checkpoint_preserves_host_arrays(tmp_path, weights_only)
             assert np.array_equal(value, host)
 
 
-def test_rejects_duplicate_mapping_and_malformed_tensor():
+def test_rejects_duplicate_mapping_and_malformed_tensor() -> None:
     array = np.ones((2,), dtype=np.float32)
     with pytest.raises(InvalidInputError, match="duplicate synthetic parameter: same"):
         mapping_from_pairs([("same", array), ("same", array)], what="synthetic")
@@ -67,14 +71,14 @@ def test_rejects_duplicate_mapping_and_malformed_tensor():
         tensor_mapping_from_payload([], what="synthetic")
 
     class MalformedTensor:
-        def numpy(self):
+        def numpy(self) -> list[int]:
             return [1, 2]
 
     with pytest.raises(InvalidInputError, match=r"tensor numpy\(\) must return an ndarray"):
         _maybe_array(MalformedTensor())
 
 
-def test_torch_loader_rejects_non_mapping_checkpoint(tmp_path):
+def test_torch_loader_rejects_non_mapping_checkpoint(tmp_path: Path) -> None:
     torch = pytest.importorskip("torch")
     path = tmp_path / "bad.pt"
     torch.save([1, 2], path)

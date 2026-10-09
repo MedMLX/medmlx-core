@@ -1,11 +1,11 @@
 # medmlx-core
 
-Shared runtime and MLX primitives for standalone MedMLX medical imaging models.
-Runtime dependencies are NumPy and MLX. Importing `medmlx_core` does not import
-MLX; Torch is loaded only when the optional checkpoint converter is called.
-No model architectures, pretrained weights, image I/O, or model runners are included.
+Shared MLX runtime and numerical primitives for standalone
+[MedMLX](https://github.com/MedMLX) medical imaging packages. Core contains no model
+architectures or pretrained weights. Runtime code is independent of RadNN,
+PyTorch and MONAI; PyTorch is needed only for optional checkpoint conversion.
 
-## Install and platform policy
+## Install
 
 ```sh
 uv pip install "medmlx-core @ git+https://github.com/MedMLX/medmlx-core.git"
@@ -148,5 +148,5 @@ weights and full-volume memory/performance are not qualified by these fixtures.
 
 ## License
 
-Apache-2.0; see [LICENSE](LICENSE). The built wheel includes the upstream MONAI
-license and existing third-party notices alongside the runtime modules.
+Apache-2.0; see [LICENSE](LICENSE). Wheels include the full upstream MONAI license
+and [third-party notices](THIRD_PARTY_NOTICES.md).

@@ -54,7 +54,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
 include = ["scripts","src","tests"]
-extraPaths = ["src"]
+extraPaths = ["src", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 enableTypeIgnoreComments = false

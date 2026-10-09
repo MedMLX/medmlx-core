@@ -1,12 +1,17 @@
 """Independent upstream outputs for shared helpers, without reference frameworks at runtime."""
 
 import importlib
+from typing import cast
 
-import mlx.core as mx
 import numpy as np
 import pytest
-from fixture_cases import array_cases, load_fixture, run_array_case
+from fixture_cases import ArrayCase, HostArray, array_cases, load_fixture, run_array_case
 from numerical import assert_reference, helper_budget
+
+from medmlx_core.runtime import import_mlx
+from medmlx_core.typing import MlxRuntime
+
+mx: MlxRuntime = import_mlx()
 
 _, CASES = array_cases()
 ARRAY_CASES = [
@@ -20,7 +25,7 @@ ARRAY_CASES = [
 @pytest.mark.parametrize(
     ("name", "case"), ARRAY_CASES, ids=[f"{name}.{case.id}" for name, case in ARRAY_CASES]
 )
-def test_upstream_outputs(name, case):
+def test_upstream_outputs(name: str, case: ArrayCase) -> None:
     metadata, arrays = load_fixture(name)
     module = importlib.import_module(f"medmlx_core.{name}")
     if case.error is not None:
@@ -37,6 +42,10 @@ def test_upstream_outputs(name, case):
     values = value if isinstance(value, tuple) else (value,)
     assert len(values) == len(record.outputs)
     for actual, key in zip(values, record.outputs, strict=True):
-        assert_reference(np.asarray(actual), arrays[key], budget=helper_budget(name, case.function))
+        assert_reference(
+            cast(HostArray, np.asarray(actual)),
+            arrays[key],
+            budget=helper_budget(name, case.function),
+        )
         if case.function == "_moments" and key == record.outputs[1]:
             assert (np.asarray(actual) >= 0).all(), "Population variance must be nonnegative"

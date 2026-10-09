@@ -8,7 +8,7 @@ from fixture_cases import darwin_contracts, peak_cases
 from medmlx_core import errors, runtime
 
 
-def test_simulated_darwin_arm64_contract():
+def test_simulated_darwin_arm64_contract() -> None:
     contract = darwin_contracts(runtime)
     expected = {
         "available": True,
@@ -25,14 +25,17 @@ def test_simulated_darwin_arm64_contract():
     assert contract["probe"] == contract["required"] == contract["device"] == expected
     assert contract["selected"] == ["gpu"]
     assert contract["device_name"] == "Device(gpu, 0)"
+    assert contract["invalid_device"]["kind"] == "error"
     assert contract["invalid_device"]["type"] == "MissingDependencyError"
     assert "explicit mlx device" in contract["invalid_device"]["message"]
     assert not contract["missing_metal"]["available"]
+    assert contract["missing_metal"]["reason"] is not None
     assert "refusing a CPU or host fallback" in contract["missing_metal"]["reason"]
+    assert contract["rejected"]["kind"] == "error"
     assert contract["rejected"]["type"] == "MissingDependencyError"
 
 
-def test_peak_memory_api_generations_contract():
+def test_peak_memory_api_generations_contract() -> None:
     for record in peak_cases(runtime):
         assert record["events"] == ([] if record["route"] == "absent" else ["reset"])
         value = record["counter"]
@@ -45,13 +48,14 @@ def test_peak_memory_api_generations_contract():
                 record["message"] == "MLX peak-memory counter did not return a non-negative number"
             )
         else:
+            assert record["kind"] == "array"
             assert record["value"] == int(value)
 
 
 @pytest.mark.parametrize(
     ("system", "machine"), [("Darwin", "x86_64"), ("Linux", "x86_64"), ("Windows", "AMD64")]
 )
-def test_unsupported_hosts_are_rejected(system, machine):
+def test_unsupported_hosts_are_rejected(system: str, machine: str) -> None:
     with (
         patch.object(runtime.platform, "system", return_value=system),
         patch.object(runtime.platform, "machine", return_value=machine),
@@ -67,15 +71,17 @@ def test_unsupported_hosts_are_rejected(system, machine):
         load_backend.assert_not_called()
 
 
-def test_missing_mlx_reports_unavailable():
+def test_missing_mlx_reports_unavailable() -> None:
     with patch.object(runtime, "_load_mlx_core", side_effect=ImportError("not installed")):
-        assert runtime._mlx_version() == (None, "mlx is not installed")
-        assert runtime._metal_available() == (False, "mlx is not installed")
-        assert not runtime.probe_mlx_runtime().available
+        report = runtime.probe_mlx_runtime()
+        assert not report.available
+        assert report.reason == "mlx is not installed"
+        with pytest.raises(errors.MissingDependencyError, match="mlx is not installed"):
+            runtime.import_mlx()
 
 
 @pytest.mark.parametrize("version", ["0.32.2", "0.31.4", "0.33.0", "0.32.3.dev1", "unknown"])
-def test_unsupported_mlx_versions_fail_before_backend_execution(version):
+def test_unsupported_mlx_versions_fail_before_backend_execution(version: str) -> None:
     backend = SimpleNamespace(__version__=version)
     with (
         patch.object(runtime.platform, "system", return_value="Darwin"),
@@ -93,7 +99,7 @@ def test_unsupported_mlx_versions_fail_before_backend_execution(version):
         metal.assert_not_called()
 
 
-def test_report_serializes_without_backend_objects():
+def test_report_serializes_without_backend_objects() -> None:
     backend = SimpleNamespace(
         __version__="0.32.3", metal=SimpleNamespace(is_available=lambda: True)
     )

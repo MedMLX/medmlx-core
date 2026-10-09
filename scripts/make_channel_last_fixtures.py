@@ -3,17 +3,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast
+
 import numpy as np
 import torch
-from monai.networks.blocks import UnetResBlock
 from monai.networks.blocks.activation import Swish
-from reference_support import output_directory, save_fixture
+from monai.networks.blocks.dynunet_block import UnetResBlock
+from reference_support import HostArray, output_directory, save_fixture
 from torch.nn import functional as F
 
+from_numpy = cast(Callable[[HostArray], torch.Tensor], vars(torch)["from_numpy"])
 
-def seeded_arrays() -> tuple[np.random.Generator, dict[str, np.ndarray]]:
+
+def seeded_arrays() -> tuple[np.random.Generator, dict[str, HostArray]]:
     rng = np.random.default_rng(20261007)
-    arrays = {
+    arrays: dict[str, HostArray] = {
         "input_2d": rng.normal(size=(1, 5, 7, 4)).astype(np.float32),
         "conv.weight": rng.normal(size=(6, 2, 3, 3)).astype(np.float32),
         "conv.bias": rng.normal(size=(6,)).astype(np.float32),
@@ -27,8 +32,8 @@ def seeded_arrays() -> tuple[np.random.Generator, dict[str, np.ndarray]]:
     return rng, arrays
 
 
-def record_layers(arrays: dict[str, np.ndarray]) -> None:
-    tensors = {key: torch.from_numpy(value) for key, value in arrays.items()}
+def record_layers(arrays: dict[str, HostArray]) -> None:
+    tensors = {key: from_numpy(value) for key, value in arrays.items()}
     x = tensors["input_2d"].permute(0, 3, 1, 2)
     x = F.conv2d(x, tensors["conv.weight"], tensors["conv.bias"], padding=1, groups=2)
     arrays["expected_conv"] = x.permute(0, 2, 3, 1).numpy()
@@ -56,7 +61,7 @@ def record_layers(arrays: dict[str, np.ndarray]) -> None:
     arrays["expected_relu"] = F.relu(tensors["input_2d"]).numpy()
 
 
-def record_extra_layers(rng: np.random.Generator, arrays: dict[str, np.ndarray]) -> None:
+def record_extra_layers(rng: np.random.Generator, arrays: dict[str, HostArray]) -> None:
     for name, shape in (
         ("projection.weight", (3, 4)),
         ("projection.bias", (3,)),
@@ -65,7 +70,7 @@ def record_extra_layers(rng: np.random.Generator, arrays: dict[str, np.ndarray])
         ("volume.weight", (3, 2, 3, 3, 3)),
     ):
         arrays[name] = rng.normal(size=shape).astype(np.float32)
-    tensors = {key: torch.from_numpy(value) for key, value in arrays.items()}
+    tensors = {key: from_numpy(value) for key, value in arrays.items()}
     arrays["expected_linear"] = F.linear(
         tensors["input_2d"], tensors["projection.weight"], tensors["projection.bias"]
     ).numpy()
@@ -76,15 +81,15 @@ def record_extra_layers(rng: np.random.Generator, arrays: dict[str, np.ndarray])
     arrays["expected_volume"] = y.permute(0, 2, 3, 4, 1).numpy()
 
 
-def record_residuals(rng: np.random.Generator, arrays: dict[str, np.ndarray]) -> None:
-    x = torch.from_numpy(arrays["input_3d"]).permute(0, 4, 1, 2, 3)
+def record_residuals(rng: np.random.Generator, arrays: dict[str, HostArray]) -> None:
+    x = from_numpy(arrays["input_3d"]).permute(0, 4, 1, 2, 3)
     for name, channels in (("residual_same", 2), ("residual_project", 3)):
         block = UnetResBlock(3, 2, channels, 3, 1, ("instance", {"affine": False, "eps": 1e-5}))
-        state = {}
-        for key, value in block.state_dict().items():
+        state: dict[str, torch.Tensor] = {}
+        for key, value in cast(dict[str, torch.Tensor], block.state_dict()).items():
             array = rng.normal(size=tuple(value.shape)).astype(np.float32)
             arrays[f"{name}.{key}"] = array
-            state[key] = torch.from_numpy(array)
+            state[key] = from_numpy(array)
         block.load_state_dict(state, strict=True)
         arrays[f"expected_{name}"] = block(x).permute(0, 2, 3, 4, 1).numpy()
 

@@ -13,20 +13,24 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from itertools import product
-from typing import Any, Literal
+from typing import Literal, cast, overload
 
 import mlx.core as mx
 import numpy as np
+from numpy.typing import DTypeLike, NDArray
 
 from medmlx_core.runtime import import_mlx
+from medmlx_core.typing import ArrayFactory, HostArray, MlxRuntime
+
+type FloatArray = NDArray[np.floating]
 
 __all__ = ["compute_importance_map", "dense_patch_slices", "sliding_window_inference"]
 
 
-def _tuple_rep(value: Any, dimensions: int) -> tuple:
+def _tuple_rep[T: int | float | None](value: T | Sequence[T], dimensions: int) -> tuple[T, ...]:
     if np.isscalar(value) or value is None:
-        return (value,) * dimensions
-    result = tuple(value)
+        return (cast(T, value),) * dimensions
+    result = tuple(cast(Sequence[T], value))
     if len(result) != dimensions:
         raise ValueError(f"Expected {dimensions} values, got {len(result)}")
     return result
@@ -47,17 +51,38 @@ def _get_scan_interval(
     )
 
 
+@overload
+def dense_patch_slices(
+    image_size: Sequence[int],
+    patch_size: Sequence[int],
+    scan_interval: Sequence[int],
+    return_slice: Literal[True] = True,
+) -> list[tuple[slice, ...]]: ...
+@overload
+def dense_patch_slices(
+    image_size: Sequence[int],
+    patch_size: Sequence[int],
+    scan_interval: Sequence[int],
+    return_slice: Literal[False],
+) -> list[tuple[tuple[int, int], ...]]: ...
+@overload
+def dense_patch_slices(
+    image_size: Sequence[int],
+    patch_size: Sequence[int],
+    scan_interval: Sequence[int],
+    return_slice: bool,
+) -> list[tuple[slice, ...]] | list[tuple[tuple[int, int], ...]]: ...
 def dense_patch_slices(
     image_size: Sequence[int],
     patch_size: Sequence[int],
     scan_interval: Sequence[int],
     return_slice: bool = True,
-) -> list[tuple]:
+) -> list[tuple[slice, ...]] | list[tuple[tuple[int, int], ...]]:
     """Enumerate MONAI's row-major windows, shifting the last to the edge."""
     patch = tuple(
         min(size, roi) if roi else size for size, roi in zip(image_size, patch_size, strict=True)
     )
-    starts = []
+    starts: list[list[int]] = []
     for size, roi, step in zip(image_size, patch, scan_interval, strict=True):
         if size < 1 or roi < 1 or step < 0:
             raise ValueError("Image/patch sizes must be positive and strides nonnegative")
@@ -74,12 +99,41 @@ def dense_patch_slices(
     ]
 
 
+@overload
 def compute_importance_map(
     patch_size: Sequence[int],
     mode: str = "constant",
     sigma_scale: Sequence[float] | float = 0.125,
-    dtype: Any = np.float32,
-) -> np.ndarray:
+    dtype: type[np.float32] = np.float32,
+) -> NDArray[np.float32]: ...
+@overload
+def compute_importance_map[T: np.generic](
+    patch_size: Sequence[int],
+    mode: str = "constant",
+    sigma_scale: Sequence[float] | float = 0.125,
+    *,
+    dtype: type[T] | np.dtype[T],
+) -> NDArray[T]: ...
+@overload
+def compute_importance_map[T: np.generic](
+    patch_size: Sequence[int],
+    mode: str,
+    sigma_scale: Sequence[float] | float,
+    dtype: type[T] | np.dtype[T],
+) -> NDArray[T]: ...
+@overload
+def compute_importance_map(
+    patch_size: Sequence[int],
+    mode: str = "constant",
+    sigma_scale: Sequence[float] | float = 0.125,
+    dtype: DTypeLike = np.float32,
+) -> HostArray: ...
+def compute_importance_map(
+    patch_size: Sequence[int],
+    mode: str = "constant",
+    sigma_scale: Sequence[float] | float = 0.125,
+    dtype: DTypeLike = np.float32,
+) -> HostArray:
     """Return MONAI's separable FP32 Gaussian, clamped at a minimum of 1e-3.
 
     The Gaussian is centered at (size - 1) / 2, without peak normalization.
@@ -91,6 +145,7 @@ def compute_importance_map(
     if mode == "constant":
         importance = np.ones(patch, dtype=np.float32)
     elif mode == "gaussian":
+        importance = np.ones((), dtype=np.float32)
         scales = _tuple_rep(sigma_scale, len(patch))
         for axis, (size, scale) in enumerate(zip(patch, scales, strict=True)):
             sigma = size * scale
@@ -104,10 +159,10 @@ def compute_importance_map(
 
 
 def _pad_input(
-    inputs: np.ndarray, roi_size: Sequence[int], padding_mode: str, cval: float
-) -> tuple[np.ndarray, tuple[slice, ...]]:
+    inputs: FloatArray, roi_size: Sequence[int], padding_mode: str, cval: float
+) -> tuple[FloatArray, tuple[slice, ...]]:
     padding = [(0, 0), (0, 0)]
-    crop = []
+    crop: list[slice] = []
     for size, roi in zip(inputs.shape[2:], roi_size, strict=True):
         extra = max(roi - size, 0)
         before = extra // 2
@@ -116,7 +171,10 @@ def _pad_input(
     if not any(before or after for before, after in padding):
         return inputs, tuple(crop)
     modes: dict[str, Literal["constant", "reflect", "edge", "wrap"]] = {
-        "constant": "constant", "reflect": "reflect", "replicate": "edge", "circular": "wrap"
+        "constant": "constant",
+        "reflect": "reflect",
+        "replicate": "edge",
+        "circular": "wrap",
     }
     if padding_mode not in modes:
         raise ValueError(f"Unsupported padding_mode: {padding_mode}")
@@ -134,11 +192,17 @@ def _pad_input(
     return padded, tuple(crop)
 
 
+def _positive_batch_size(value: object) -> int:
+    if not isinstance(value, int) or value < 1:
+        raise ValueError("sw_batch_size must be a positive integer")
+    return value
+
+
 def sliding_window_inference(
-    inputs: np.ndarray | mx.array,
+    inputs: HostArray | mx.array,
     roi_size: Sequence[int | None] | int,
     sw_batch_size: int,
-    predictor: Callable[..., mx.array],
+    predictor: Callable[..., object],
     overlap: Sequence[float] | float = 0.25,
     mode: str = "constant",
     sigma_scale: Sequence[float] | float = 0.125,
@@ -147,14 +211,14 @@ def sliding_window_inference(
     sw_device: mx.Device | mx.DeviceType | str | None = None,
     device: str | None = None,
     progress: bool = False,
-    roi_weight_map: np.ndarray | mx.array | None = None,
-    process_fn: Callable | None = None,
+    roi_weight_map: FloatArray | mx.array | None = None,
+    process_fn: Callable[..., object] | None = None,
     buffer_steps: int | None = None,
     buffer_dim: int = -1,
     with_coord: bool = False,
-    *args: Any,
-    **kwargs: Any,
-) -> np.ndarray:
+    *args: object,
+    **kwargs: object,
+) -> FloatArray:
     """Predict and blend 1D/2D/3D windows, returning host NumPy logits.
 
     The predictor receives MLX ``(N, C, *roi_size)`` arrays and must return one
@@ -182,14 +246,14 @@ def sliding_window_inference(
         raise ValueError("sw_device must be None, 'gpu', or an MLX GPU device")
     if isinstance(sw_device, str):
         sw_device = mx.gpu
-    host = np.asarray(inputs)
-    spatial = host.shape[2:]
-    if not 1 <= len(spatial) <= 3 or any(size < 1 for size in host.shape):
+    raw_host: HostArray = np.asarray(inputs)
+    spatial = raw_host.shape[2:]
+    if not 1 <= len(spatial) <= 3 or any(size < 1 for size in raw_host.shape):
         raise ValueError("inputs must be a nonempty (N, C, *spatial) 1D/2D/3D array")
-    if host.dtype not in (np.dtype(np.float16), np.dtype(np.float32)):
+    if raw_host.dtype not in (np.dtype(np.float16), np.dtype(np.float32)):
         raise TypeError("inputs must have float16 or float32 dtype")
-    if not isinstance(sw_batch_size, int) or sw_batch_size < 1:
-        raise ValueError("sw_batch_size must be a positive integer")
+    host = cast(FloatArray, raw_host)
+    sw_batch_size = _positive_batch_size(sw_batch_size)
     roi = tuple(
         int(value) if value is not None and value > 0 else size
         for value, size in zip(_tuple_rep(roi_size, len(spatial)), spatial, strict=True)
@@ -209,7 +273,9 @@ def sliding_window_inference(
     if importance.shape not in (roi, (1, 1, *roi)):
         raise ValueError("roi_weight_map must have shape roi_size or (1, 1, *roi_size)")
     importance = importance.reshape(1, 1, *roi)
-    import_mlx()  # Admit Metal explicitly before invoking the predictor.
+    # Admit Metal explicitly before invoking the predictor.
+    runtime = cast(MlxRuntime, import_mlx())
+    make_array = cast(ArrayFactory, runtime.array)
     output = None
     counts = np.zeros((1, 1, *image_size), dtype=host.dtype)
     # MONAI builds this once per spatial window, independently of image batch.
@@ -227,7 +293,7 @@ def sliding_window_inference(
         ]
         patches = np.concatenate([padded[tuple(coord)] for coord in coordinates], axis=0)
         with mx.stream(sw_device if sw_device is not None else mx.default_device()):
-            batch = mx.array(patches)
+            batch = make_array(patches)
             prediction = (
                 predictor(batch, coordinates, *args, **kwargs)
                 if with_coord
@@ -235,8 +301,8 @@ def sliding_window_inference(
             )
             if not isinstance(prediction, mx.array):
                 raise TypeError("predictor must return one MLX array")
-            mx.eval(prediction)
-            predicted = np.array(prediction, copy=True)
+            runtime.eval(prediction)
+            predicted = cast(FloatArray, np.array(prediction, copy=True))
         if (
             predicted.ndim != host.ndim
             or predicted.shape[0] != len(coordinates)

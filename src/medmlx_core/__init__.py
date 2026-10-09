@@ -1,5 +1,14 @@
 """Shared MLX runtime for MedMLX model packages."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from medmlx_core.sliding_window import (
+        compute_importance_map,
+        dense_patch_slices,
+        sliding_window_inference,
+    )
+
 from medmlx_core.checkpoints import (
     load_torch_checkpoint,
     mapping_from_pairs,
