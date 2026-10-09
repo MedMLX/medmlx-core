@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "medmlx-core"
-version = "0.1.2"
+version = "0.1.3"
 description = "Shared MLX runtime for MedMLX model packages"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -15,6 +15,12 @@ dependencies = [
   "mlx>=0.32.3,<0.33; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "numpy>=2.0,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/MedMLX/medmlx-core"
+Repository = "https://github.com/MedMLX/medmlx-core"
+Documentation = "https://github.com/MedMLX/medmlx-core/blob/main/docs/technical.md"
+Issues = "https://github.com/MedMLX/medmlx-core/issues"
 
 [project.optional-dependencies]
 conversion = [
