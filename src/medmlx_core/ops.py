@@ -13,6 +13,7 @@ from medmlx_core.layout import (
     to_ncdhw,
     to_ndhwc,
 )
+from medmlx_core.upsample import deconv2x_ncdhw
 
 
 def as_fp32(array: Any, mx: Any) -> Any:
@@ -102,6 +103,16 @@ def conv_transpose3d_ncdhw(
     """NCDHW conv_transpose3d using Torch weight layout ``[I, O, K]``."""
 
     require_ncdhw(array, name="conv_transpose3d input")
+    if (
+        stride == 2
+        and padding == output_padding == 0
+        and tuple(weight.shape[2:]) == (2, 2, 2)
+        and array.dtype == weight.dtype == mx.float32
+        and (bias is None or bias.dtype == mx.float32)
+    ):
+        # MLX 0.32.3 marks phase views of the public output as temporaries,
+        # losing cross-encoder synchronization when a lazy decoder consumes it.
+        return deconv2x_ncdhw(array, weight, bias, mx=mx)
     output = mx.conv_transpose3d(
         to_ndhwc(array, mx),
         conv_transpose3d_weight_to_mlx(weight, mx),
