@@ -108,7 +108,7 @@ def upsample_add_ncdhw(values: Array, skip: Array, *, mx: MlxRuntime) -> Array:
 
 
 def deconv2x_ncdhw(values: Array, weight: Array, bias: Array | None, *, mx: MlxRuntime) -> Array:
-    """Exact 2x NCDHW transposed convolution using eight MLX matmul phases.
+    """2x NCDHW transposed convolution with all eight phases in one MLX matmul.
 
     This covers the pinned SegResNet decoder configuration only: groups=1,
     kernel=stride=2, padding=output_padding=0.  Keeping the checkpoint's
@@ -137,15 +137,14 @@ def deconv2x_ncdhw(values: Array, weight: Array, bias: Array | None, *, mx: MlxR
         )
 
     source = mx.transpose(values, (0, 2, 3, 4, 1))
-    phases = [
-        source @ weight[:, :, phase_depth, phase_height, phase_width]
-        for phase_depth in range(2)
-        for phase_height in range(2)
-        for phase_width in range(2)
-    ]
-    packed = mx.reshape(mx.stack(phases, axis=-2), (n, depth, height, width, 2, 2, 2, out_channels))
+    # Pack phases before output channels, retaining the original D/H/W phase order.
+    projection = mx.reshape(mx.transpose(weight, (0, 2, 3, 4, 1)), (channels, 8 * out_channels))
+    packed = mx.reshape(source @ projection, (n, depth, height, width, 2, 2, 2, out_channels))
+    # Keep storage channel-last: channel-last consumers can recover it with a view.
     output = mx.reshape(
-        mx.transpose(packed, (0, 7, 1, 4, 2, 5, 3, 6)),
-        (n, out_channels, 2 * depth, 2 * height, 2 * width),
+        mx.transpose(packed, (0, 1, 4, 2, 5, 3, 6, 7)),
+        (n, 2 * depth, 2 * height, 2 * width, out_channels),
     )
-    return output if bias is None else output + mx.reshape(bias, (1, out_channels, 1, 1, 1))
+    if bias is not None:
+        output = output + mx.reshape(bias, (1, 1, 1, 1, out_channels))
+    return mx.transpose(output, (0, 4, 1, 2, 3))
