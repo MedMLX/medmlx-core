@@ -9,6 +9,7 @@ from fixture_cases import (
     FIXTURES,
     REFERENCE,
     FixtureMetadata,
+    JSONValue,
     ReferenceSpec,
     array_cases,
     load_fixture,
@@ -18,7 +19,7 @@ from hypothesis import strategies as st
 
 
 @pytest.mark.parametrize("name", ["layout", "ops", "upsample", "precision"])
-def test_recorded_helper_coverage_and_seeded_inputs(name):
+def test_recorded_helper_coverage_and_seeded_inputs(name: str) -> None:
     metadata, arrays = load_fixture(name)
     seeded, cases = array_cases()
     assert metadata.seed == 7081
@@ -33,7 +34,7 @@ def test_recorded_helper_coverage_and_seeded_inputs(name):
             assert np.isfinite(arrays[key]).all()
 
 
-def test_every_archive_has_current_provenance_and_is_small():
+def test_every_archive_has_current_provenance_and_is_small() -> None:
     paths = sorted(FIXTURES.parent.rglob("*.npz"))
     assert len(paths) >= 7
     for path in paths:
@@ -44,12 +45,12 @@ def test_every_archive_has_current_provenance_and_is_small():
         assert path.parent == FIXTURES
 
 
-def test_missing_reference_fails_with_regeneration_hint():
+def test_missing_reference_fails_with_regeneration_hint() -> None:
     with pytest.raises(FileNotFoundError, match="run the README fixture commands"):
         load_fixture("unrecorded-helper")
 
 
-def test_fixture_metadata_rejects_undeclared_fields():
+def test_fixture_metadata_rejects_undeclared_fields() -> None:
     metadata, _ = load_fixture("layout")
     payload = json.loads(metadata.to_json())
     payload["unexpected"] = "not part of the schema"
@@ -59,7 +60,7 @@ def test_fixture_metadata_rejects_undeclared_fields():
 
 @given(st.text(), st.text())
 @settings(database=None)
-def test_reference_spec_round_trip(monai_version, torch_version):
+def test_reference_spec_round_trip(monai_version: str, torch_version: str) -> None:
     value = ReferenceSpec(
         1,
         monai_version or "1",
@@ -81,7 +82,7 @@ JSON_VALUES = st.recursive(
 
 @given(JSON_VALUES)
 @settings(database=None)
-def test_reference_parser_accepts_typed_objects_or_raises_value_error(payload):
+def test_reference_parser_accepts_typed_objects_or_raises_value_error(payload: JSONValue) -> None:
     try:
         value = ReferenceSpec.from_json(json.dumps(payload))
     except ValueError:
@@ -91,7 +92,7 @@ def test_reference_parser_accepts_typed_objects_or_raises_value_error(payload):
 
 @given(JSON_VALUES)
 @settings(database=None)
-def test_fixture_parser_accepts_typed_objects_or_raises_value_error(payload):
+def test_fixture_parser_accepts_typed_objects_or_raises_value_error(payload: JSONValue) -> None:
     try:
         value = FixtureMetadata.from_json(json.dumps(payload))
     except ValueError:
@@ -105,14 +106,14 @@ def test_fixture_parser_accepts_typed_objects_or_raises_value_error(payload):
     "field",
     ["schema_version", "monai_version", "monai_revision", "torch_version", "torch_revision"],
 )
-def test_reference_parser_rejects_invalid_field_types(field):
+def test_reference_parser_rejects_invalid_field_types(field: str) -> None:
     payload = asdict(REFERENCE)
     payload[field] = None
     with pytest.raises(ValueError):
         ReferenceSpec.from_json(json.dumps(payload))
 
 
-def test_reference_pin_matches_development_dependencies():
+def test_reference_pin_matches_development_dependencies() -> None:
     import tomllib
     from pathlib import Path
 
@@ -124,7 +125,7 @@ def test_reference_pin_matches_development_dependencies():
 
 @given(st.integers(min_value=0), st.sampled_from([None, "constant", "gaussian"]))
 @settings(database=None)
-def test_fixture_metadata_round_trip(seed, mode):
+def test_fixture_metadata_round_trip(seed: int, mode: str | None) -> None:
     value = FixtureMetadata(
         REFERENCE,
         "darwin-arm64",
@@ -139,7 +140,7 @@ def test_fixture_metadata_round_trip(seed, mode):
 
 
 @pytest.mark.parametrize("schema", [True, False, 0, 1, "2", None])
-def test_fixture_parser_rejects_unsupported_schema(schema):
+def test_fixture_parser_rejects_unsupported_schema(schema: JSONValue) -> None:
     value = FixtureMetadata(
         REFERENCE,
         "darwin-arm64",

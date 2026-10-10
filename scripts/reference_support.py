@@ -8,7 +8,7 @@ import platform
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TypedDict, Unpack
 
 import monai
 import numpy as np
@@ -21,13 +21,14 @@ from fixture_cases import (  # noqa: E402
     RECORDING_PLATFORM,
     REFERENCE,
     ArrayCase,
+    HostArray,
     array_cases,
 )
 
-__all__ = ["ArrayCase", "array_cases", "output_directory", "save_fixture"]
+__all__ = ["ArrayCase", "HostArray", "array_cases", "output_directory", "save_fixture"]
 
 
-def output_directory(description: str) -> Path:
+def output_directory(description: str | None) -> Path:
     if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
         raise RuntimeError("Reference recording requires macOS Apple Silicon")
     parser = argparse.ArgumentParser(description=description)
@@ -49,8 +50,22 @@ def output_directory(description: str) -> Path:
     return root
 
 
+class CaseRecord(TypedDict):
+    id: str
+    outputs: list[str]
+
+
+class FixtureDetails(TypedDict, total=False):
+    cases: list[CaseRecord]
+    mode: str
+
+
 def save_fixture(
-    root: Path, name: str, seed: int, arrays: dict[str, np.ndarray], **details: Any
+    root: Path,
+    name: str,
+    seed: int,
+    arrays: dict[str, HostArray],
+    **details: Unpack[FixtureDetails],
 ) -> None:
     metadata = {
         "schema_version": 2,

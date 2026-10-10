@@ -6,8 +6,10 @@ import json
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
+from typing import cast
 
 import numpy as np
+from fixture_cases import HostArray, JSONValue
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,12 +30,16 @@ class NumericalBudget:
                 raise ValueError("Numerical bounds must be finite nonnegative numbers")
         object.__setattr__(self, "rtol", float(self.rtol))
         object.__setattr__(self, "atol", float(self.atol))
-        if not isinstance(self.reason, str) or not self.reason:
+        if not _has_reason(self.reason):
             raise ValueError("Numerical bounds require a reason")
 
 
+def _has_reason(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
 def _unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    fields = {}
+    fields: dict[str, object] = {}
     for key, value in pairs:
         if key in fields:
             raise ValueError(f"Duplicate numerical contract field: {key}")
@@ -46,7 +52,9 @@ def _reject_constant(value: str) -> None:
 
 
 def parse_contract(value: str) -> dict[str, NumericalBudget]:
-    payload = json.loads(value, object_pairs_hook=_unique_fields, parse_constant=_reject_constant)
+    payload: JSONValue = json.loads(
+        value, object_pairs_hook=_unique_fields, parse_constant=_reject_constant
+    )
     boundary = {"schema_version": 1, "dtype": "float32", "shape": "reference"}
     fields = {"schema_version", "dtype", "shape", "allow_nan", "allow_inf", "budgets"}
     if (
@@ -67,13 +75,24 @@ def parse_contract(value: str) -> dict[str, NumericalBudget]:
         for rule in budgets.values()
     ):
         raise ValueError("Each numerical budget must declare bounds and a reason")
-    return {name: NumericalBudget(**rule) for name, rule in budgets.items()}
+    parsed: dict[str, NumericalBudget] = {}
+    for name, rule in budgets.items():
+        assert isinstance(rule, dict)  # The complete rule shape was checked above.
+        rtol, atol, reason = rule["rtol"], rule["atol"], rule["reason"]
+        if (
+            type(rtol) not in (int, float)
+            or type(atol) not in (int, float)
+            or not isinstance(reason, str)
+        ):
+            raise ValueError("Numerical bounds must be finite nonnegative numbers with a reason")
+        parsed[name] = NumericalBudget(cast(float, rtol), cast(float, atol), reason)
+    return parsed
 
 
 BUDGETS = parse_contract((Path(__file__).parent / "numerical_contract.json").read_text())
 
 
-def assert_reference(actual: np.ndarray, expected: np.ndarray, *, budget: str) -> None:
+def assert_reference(actual: HostArray, expected: HostArray, *, budget: str) -> None:
     assert actual.dtype == expected.dtype == np.dtype(np.float32)
     assert actual.shape == expected.shape
     assert np.isfinite(actual).all() and np.isfinite(expected).all()

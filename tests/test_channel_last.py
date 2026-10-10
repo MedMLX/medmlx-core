@@ -1,35 +1,44 @@
 """Pinned MONAI/PyTorch references for each layer and complete seeded graphs."""
 
-import mlx.core as mx
+from typing import cast
+
+import mlx.core as mlx
 import numpy as np
 import pytest
-from fixture_cases import load_fixture
+from fixture_cases import HostArray, load_fixture
 from numerical import assert_reference
 
 from medmlx_core.channel_last import ChannelLastGraph
+from medmlx_core.runtime import import_mlx
+from medmlx_core.typing import ArrayFactory, MlxRuntime
+
+mx: MlxRuntime = import_mlx()
+make_array = cast(ArrayFactory, mx.array)
 
 
 @pytest.fixture
-def graph_and_arrays():
+def graph_and_arrays() -> tuple[ChannelLastGraph, dict[str, HostArray]]:
     _, arrays = load_fixture("channel_last")
     weights = {
-        key: mx.array(value)
+        key: make_array(value)
         for key, value in arrays.items()
         if key.endswith((".weight", ".bias", ".running_mean", ".running_var"))
     }
     return ChannelLastGraph(weights, mx=mx), arrays
 
 
-def assert_stage(actual: mx.array, expected: np.ndarray, *, budget: str = "graph") -> None:
+def assert_stage(actual: mlx.array, expected: HostArray, *, budget: str = "graph") -> None:
     mx.eval(actual)
-    host = np.asarray(actual)
+    host = cast(HostArray, np.asarray(actual))
     assert_reference(host, expected, budget=budget)
 
 
 @pytest.mark.parametrize("case", ["2d", "3d"])
-def test_channel_last_seeded_graph_matches_upstream(graph_and_arrays, case):
+def test_channel_last_seeded_graph_matches_upstream(
+    graph_and_arrays: tuple[ChannelLastGraph, dict[str, HostArray]], case: str
+) -> None:
     graph, arrays = graph_and_arrays
-    x = mx.array(arrays[f"input_{case}"])
+    x = make_array(arrays[f"input_{case}"])
     if case == "2d":
         x = graph.conv(x, "conv", padding=1, groups=2)
         x = graph.batch_norm(x, "bn", eps=1e-3)
@@ -69,11 +78,17 @@ def test_channel_last_seeded_graph_matches_upstream(graph_and_arrays, case):
         "deconv",
     ],
 )
-def test_individual_layers_match_upstream(graph_and_arrays, layer, input_key, expected_key, budget):
+def test_individual_layers_match_upstream(
+    graph_and_arrays: tuple[ChannelLastGraph, dict[str, HostArray]],
+    layer: str,
+    input_key: str,
+    expected_key: str,
+    budget: str,
+) -> None:
     graph, arrays = graph_and_arrays
     # Feed each layer the upstream stage input, isolating its own rounding from
     # errors propagated by earlier layers. Complete graphs are checked above.
-    x = mx.array(arrays[input_key])
+    x = make_array(arrays[input_key])
     if layer == "linear":
         actual = graph.linear(x, "projection")
     elif layer == "affine_ln":
@@ -94,14 +109,16 @@ def test_individual_layers_match_upstream(graph_and_arrays, layer, input_key, ex
 
 
 @pytest.mark.parametrize("name", ["residual_same", "residual_project"])
-def test_residual_blocks_match_monai(graph_and_arrays, name):
+def test_residual_blocks_match_monai(
+    graph_and_arrays: tuple[ChannelLastGraph, dict[str, HostArray]], name: str
+) -> None:
     graph, arrays = graph_and_arrays
-    assert_stage(graph.residual3d(mx.array(arrays["input_3d"]), name), arrays[f"expected_{name}"])
+    assert_stage(graph.residual3d(make_array(arrays["input_3d"]), name), arrays[f"expected_{name}"])
 
 
-def test_input_contract(graph_and_arrays):
+def test_input_contract(graph_and_arrays: tuple[ChannelLastGraph, dict[str, HostArray]]) -> None:
     graph, arrays = graph_and_arrays
-    x = mx.array(arrays["input_2d"])
+    x = make_array(arrays["input_2d"])
     graph.require_input(x, (5, 7, 4))
     with pytest.raises(ValueError, match="Expected Bx"):
         graph.require_input(x, (4, 7, 4))

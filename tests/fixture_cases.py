@@ -6,10 +6,113 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
 
 import numpy as np
+from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from mlx.core import array as Array
+
+    from medmlx_core.runtime import DeviceRuntime, MlxHostReport
+    from medmlx_core.typing import ArrayFactory, MlxRuntime
+
+type HostArray = NDArray[np.number]
+type JSONValue = bool | int | float | str | list[JSONValue] | dict[str, JSONValue] | None
+type CaseValue = int | float | str | list[int] | tuple[int, ...]
+
+
+class CaseOptions(TypedDict, total=False):
+    name: str
+    spatial: list[int] | tuple[int, ...]
+    padding: int | list[int] | tuple[int, int, int]
+    stride: int | list[int] | tuple[int, int, int]
+    output_padding: int
+    num_splits: int
+    dim_split: int
+    num_groups: int
+    eps: float
+    scale: int
+    kernel_size: int
+
+
+class NoneOutcome(TypedDict):
+    kind: Literal["none"]
+
+
+class ArrayOutcome(TypedDict):
+    kind: Literal["array", "tuple"]
+    arrays: list[HostArray]
+
+
+class ErrorOutcome(TypedDict):
+    kind: Literal["error"]
+    type: str
+    message: str
+
+
+type Outcome = NoneOutcome | ArrayOutcome | ErrorOutcome
+
+
+class PeakRecord(TypedDict):
+    route: str
+    counter: int | float | bool | str
+    events: list[str]
+
+
+class PeakNone(PeakRecord, NoneOutcome):
+    pass
+
+
+class PeakError(PeakRecord, ErrorOutcome):
+    pass
+
+
+class PeakValue(PeakRecord):
+    kind: Literal["array"]
+    value: int | None
+
+
+class ReportPayload(TypedDict):
+    available: bool
+    mlx_version: str | None
+    macos_version: str | None
+    apple_chip: str | None
+    memory_bytes: int | None
+    python_version: str
+    platform_system: str
+    platform_machine: str
+    reason: str | None
+    hint: NotRequired[str | None]
+
+
+class RuntimeAPI(Protocol):
+    platform: ModuleType
+
+    def reset_mlx_peak_memory(self, mx: object) -> None: ...
+    def mlx_peak_memory_bytes(self, mx: object) -> int | None: ...
+    def probe_mlx_runtime(self) -> MlxHostReport: ...
+    def require_mlx_runtime(self) -> MlxHostReport: ...
+    def require_mlx_device(self, device: str) -> MlxHostReport: ...
+    def import_mlx(self) -> object: ...
+    def mlx_default_device_name(self, mx: DeviceRuntime) -> str: ...
+
+
+class RuntimeContracts(TypedDict):
+    probe: ReportPayload
+    required: ReportPayload
+    device: ReportPayload
+    selected: list[str]
+    device_name: str
+    invalid_device: Outcome
+    missing_metal: ReportPayload
+    rejected: Outcome
+
+
+def _nonempty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
 
 RECORDING_PLATFORM = "darwin-arm64"
 FIXTURES = Path(__file__).parent / "fixtures" / RECORDING_PLATFORM
@@ -20,9 +123,14 @@ class ArrayCase:
     id: str
     function: str
     args: tuple[str | None, ...]
-    kwargs: tuple[tuple[str, Any], ...]
+    kwargs: tuple[tuple[str, CaseValue], ...]
     error: type[Exception] | None = None
     error_message: str | None = None
+
+    @property
+    def options(self) -> CaseOptions:
+        # Cases are built from the declared fixture options below, never external payloads.
+        return cast(CaseOptions, dict(self.kwargs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,14 +144,11 @@ class ReferenceSpec:
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != 1:
             raise ValueError(f"Unsupported reference schema: {self.schema_version}")
-        if any(
-            not isinstance(value, str) or not value
-            for value in (self.monai_version, self.torch_version)
-        ):
+        if any(not _nonempty_string(value) for value in (self.monai_version, self.torch_version)):
             raise ValueError("Reference versions must be explicit strings")
         for revision in (self.monai_revision, self.torch_revision):
             if (
-                not isinstance(revision, str)
+                not _nonempty_string(revision)
                 or len(revision) != 40
                 or any(character not in "0123456789abcdef" for character in revision)
             ):
@@ -51,10 +156,19 @@ class ReferenceSpec:
 
     @classmethod
     def from_json(cls, value: str) -> ReferenceSpec:
-        payload = json.loads(value)
+        payload: JSONValue = json.loads(value)
         if not isinstance(payload, dict) or payload.keys() != {field.name for field in fields(cls)}:
             raise ValueError("Reference spec must contain exactly the declared fields")
-        return cls(**payload)
+        schema = payload["schema_version"]
+        if type(schema) is not int:
+            raise ValueError("Unsupported reference schema")
+        values = [
+            payload[key]
+            for key in ("monai_version", "monai_revision", "torch_version", "torch_revision")
+        ]
+        if not all(isinstance(item, str) for item in values):
+            raise ValueError("Reference fields must be explicit strings")
+        return cls(schema, *(cast(str, item) for item in values))
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -79,7 +193,7 @@ class FixtureMetadata:
 
     @classmethod
     def from_json(cls, value: str) -> FixtureMetadata:
-        payload = json.loads(value)
+        payload: JSONValue = json.loads(value)
         if (
             not isinstance(payload, dict)
             or type(payload.get("schema_version")) is not int
@@ -99,12 +213,12 @@ class FixtureMetadata:
         provenance = tuple(
             payload.get(key) for key in ("reference_device", "numpy_version", "torch_build")
         )
-        if any(not isinstance(value, str) or not value for value in provenance):
+        if any(not _nonempty_string(value) for value in provenance):
             raise ValueError("Fixture must declare its reference device and framework builds")
         mode = payload.get("mode")
         if mode not in (None, "constant", "gaussian"):
             raise ValueError("Invalid fixture blend mode")
-        cases = []
+        cases: list[RecordedCase] = []
         for case in recorded:
             if (
                 not isinstance(case, dict)
@@ -116,18 +230,18 @@ class FixtureMetadata:
             outputs = case.get("outputs")
             if not isinstance(outputs, list) or any(not isinstance(key, str) for key in outputs):
                 raise ValueError("Fixture outputs must be array keys")
-            cases.append(RecordedCase(case["id"], tuple(outputs)))
+            cases.append(RecordedCase(cast(str, case["id"]), tuple(cast(list[str], outputs))))
         if len({case.id for case in cases}) != len(cases):
             raise ValueError("Fixture case ids must be unique")
         return cls(
             upstream=upstream,
-            platform=recording_platform,
+            platform=cast(str, recording_platform),
             seed=seed,
             cases=tuple(cases),
-            reference_device=provenance[0],
-            numpy_version=provenance[1],
-            torch_build=provenance[2],
-            mode=mode,
+            reference_device=cast(str, provenance[0]),
+            numpy_version=cast(str, provenance[1]),
+            torch_build=cast(str, provenance[2]),
+            mode=cast(str | None, mode),
         )
 
     def to_json(self) -> str:
@@ -140,7 +254,7 @@ class FixtureMetadata:
 REFERENCE = ReferenceSpec.from_json((Path(__file__).parent / "reference_spec.json").read_text())
 
 
-def load_fixture(name: str) -> tuple[FixtureMetadata, dict[str, np.ndarray]]:
+def load_fixture(name: str) -> tuple[FixtureMetadata, dict[str, HostArray]]:
     path = FIXTURES / f"{name}.npz"
     if not path.is_file():
         raise FileNotFoundError(
@@ -154,10 +268,10 @@ def load_fixture(name: str) -> tuple[FixtureMetadata, dict[str, np.ndarray]]:
     return metadata, arrays
 
 
-def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[ArrayCase]]]:
+def array_cases() -> tuple[dict[str, HostArray], dict[str, list[ArrayCase]]]:
     rng = np.random.default_rng(7081)
 
-    def random(shape: tuple[int, ...]) -> np.ndarray:
+    def random(shape: tuple[int, ...]) -> HostArray:
         return rng.standard_normal(shape).astype(np.float32)
 
     arrays = {
@@ -184,7 +298,7 @@ def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[ArrayCase]]]:
         *,
         error: type[Exception] | None = None,
         error_message: str | None = None,
-        **kwargs: Any,
+        **kwargs: CaseValue,
     ) -> None:
         items = cases.setdefault(module, [])
         items.append(
@@ -209,8 +323,8 @@ def array_cases() -> tuple[dict[str, np.ndarray], dict[str, list[ArrayCase]]]:
 
 def _add_layout_cases(
     add: Callable[..., None],
-    arrays: dict[str, np.ndarray],
-    random: Callable[[tuple[int, ...]], np.ndarray],
+    arrays: dict[str, HostArray],
+    random: Callable[[tuple[int, ...]], HostArray],
 ) -> None:
     add("layout", "require_ncdhw", ["x"], name="input")
     add(
@@ -388,8 +502,8 @@ def _add_decoder_cases(add: Callable[..., None]) -> None:
 
 def _add_precision_cases(
     add: Callable[..., None],
-    arrays: dict[str, np.ndarray],
-    random: Callable[[tuple[int, ...]], np.ndarray],
+    arrays: dict[str, HostArray],
+    random: Callable[[tuple[int, ...]], HostArray],
 ) -> None:
     add("precision", "eps", [])
     add("precision", "conv", ["small", "w", "bias"], padding=1, stride=1)
@@ -402,43 +516,59 @@ def _add_precision_cases(
         add("precision", "_moments", [key])
 
 
-def run_array_case(module: Any, case: ArrayCase, arrays: Any, mx: Any) -> Any:
-    args = [None if key is None else mx.array(arrays[key]) for key in case.args]
-    kwargs = dict(case.kwargs)
+def run_array_case(
+    module: ModuleType, case: ArrayCase, arrays: dict[str, HostArray], mx: MlxRuntime
+) -> Array | tuple[Array, ...] | None:
+    make_array = cast("ArrayFactory", mx.array)
+    args = [None if key is None else make_array(arrays[key]) for key in case.args]
+    kwargs: dict[str, CaseValue | MlxRuntime] = dict(case.kwargs)
     if "spatial" in kwargs:
-        kwargs["spatial"] = tuple(kwargs["spatial"])
+        kwargs["spatial"] = tuple(cast(list[int] | tuple[int, ...], kwargs["spatial"]))
     if hasattr(module, "Float32Operators"):
-        instance = module.Float32Operators(mx, groups=1, eps=1e-5)
+        from medmlx_core.precision import Float32Operators
+
+        instance = Float32Operators(mx, groups=1, eps=1e-5)
         if case.function == "eps":
             return instance.eps
-        return getattr(instance, case.function)(*args, **kwargs)
+        return cast("Callable[..., Array | tuple[Array, ...]]", getattr(instance, case.function))(
+            *args, **kwargs
+        )
     if case.function != "require_ncdhw":
         kwargs["mx"] = mx
-    return getattr(module, case.function)(*args, **kwargs)
+    return cast("Callable[..., Array | None]", getattr(module, case.function))(*args, **kwargs)
 
 
-def outcome(call: Callable[[], Any], mx: Any | None = None) -> dict[str, Any]:
+def outcome(call: Callable[[], object], mx: MlxRuntime | None = None) -> Outcome:
     try:
         value = call()
         if value is None:
             return {"kind": "none"}
         if mx is not None:
-            mx.eval(value)
+            mx.eval(cast("Array | tuple[Array, ...]", value))
         if isinstance(value, tuple):
-            return {"kind": "tuple", "arrays": [np.array(item) for item in value]}
-        return {"kind": "array", "arrays": [np.array(value)]}
+            return {
+                "kind": "tuple",
+                "arrays": [
+                    cast(HostArray, np.array(item)) for item in cast(tuple[object, ...], value)
+                ],
+            }
+        return {"kind": "array", "arrays": [cast(HostArray, np.array(value))]}
     except (ValueError, TypeError, RuntimeError, ImportError) as exc:
         return {"kind": "error", "type": type(exc).__name__, "message": str(exc)}
 
 
-def peak_cases(module: Any) -> list[dict[str, Any]]:
+def peak_cases(module: RuntimeAPI) -> list[PeakNone | PeakError | PeakValue]:
     """Exercise both memory API generations and invalid backend counters."""
-    results = []
+    results: list[PeakNone | PeakError | PeakValue] = []
     for route in ("native", "metal", "absent"):
         for value in (42, 42.75, 0, -1, True, "42"):
-            events = []
+            events: list[str] = []
+
+            def reset(e: list[str] = events) -> None:
+                e.append("reset")
+
             api = SimpleNamespace(
-                reset_peak_memory=lambda e=events: e.append("reset"),
+                reset_peak_memory=reset,
                 get_peak_memory=lambda v=value: v,
             )
             mx = api if route == "native" else SimpleNamespace()
@@ -446,27 +576,34 @@ def peak_cases(module: Any) -> list[dict[str, Any]]:
                 mx.metal = api
             module.reset_mlx_peak_memory(mx)
             result = outcome(lambda backend=mx: module.mlx_peak_memory_bytes(backend))
-            result.pop("arrays", None)
+            base: PeakRecord = {"route": route, "counter": value, "events": events}
             if result["kind"] == "array":
-                result["value"] = module.mlx_peak_memory_bytes(mx)
-            results.append({"route": route, "counter": value, "events": events, **result})
+                results.append({**base, "kind": "array", "value": module.mlx_peak_memory_bytes(mx)})
+            elif result["kind"] == "error":
+                results.append({**base, **result})
+            else:
+                results.append({**base, "kind": "none"})
     return results
 
 
-def darwin_contracts(module: Any) -> dict[str, Any]:
+def darwin_contracts(module: RuntimeAPI) -> RuntimeContracts:
     """Only platform/sysctl/backend boundaries are simulated, never readiness gates."""
     from unittest.mock import patch
 
-    calls = []
+    calls: list[str] = []
+
+    def select(device: str) -> None:
+        calls.append(device)
+
     backend = SimpleNamespace(
         __version__="0.32.3",
         metal=SimpleNamespace(is_available=lambda: True),
         gpu="gpu",
         default_device=lambda: "Device(gpu, 0)",
-        set_default_device=lambda device: calls.append(device),
+        set_default_device=select,
     )
 
-    def sysctl(command: list[str], **_kwargs: Any) -> Any:
+    def sysctl(command: list[str], **_kwargs: object) -> SimpleNamespace:
         return SimpleNamespace(
             stdout="Apple M3\n" if "brand_string" in command[-1] else "17179869184\n"
         )
@@ -479,13 +616,13 @@ def darwin_contracts(module: Any) -> dict[str, Any]:
         patch("subprocess.run", side_effect=sysctl),
         patch.object(module, "_load_mlx_core", return_value=backend),
     ):
-        report = module.probe_mlx_runtime().to_payload()
-        required = module.require_mlx_runtime().to_payload()
-        device = module.require_mlx_device("  MLX ").to_payload()
+        report = cast(ReportPayload, module.probe_mlx_runtime().to_payload())
+        required = cast(ReportPayload, module.require_mlx_runtime().to_payload())
+        device = cast(ReportPayload, module.require_mlx_device("  MLX ").to_payload())
         assert module.import_mlx() is backend
         invalid = outcome(lambda: module.require_mlx_device("cpu"))
         backend.metal.is_available = lambda: False
-        missing_metal = module.probe_mlx_runtime().to_payload()
+        missing_metal = cast(ReportPayload, module.probe_mlx_runtime().to_payload())
         missing_metal.pop("hint")
         rejected = outcome(module.require_mlx_runtime)
         return {
@@ -493,8 +630,8 @@ def darwin_contracts(module: Any) -> dict[str, Any]:
             "required": required,
             "device": device,
             "selected": calls,
-            "device_name": module.mlx_default_device_name(backend),
+            "device_name": module.mlx_default_device_name(cast("DeviceRuntime", backend)),
             "invalid_device": invalid,
             "missing_metal": missing_metal,
-            "rejected": {key: value for key, value in rejected.items() if key != "arrays"},
+            "rejected": rejected,
         }

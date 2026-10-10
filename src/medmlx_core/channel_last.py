@@ -1,51 +1,59 @@
 """Channel-last MLX layers shared by standalone medical imaging models."""
 
-from collections.abc import Mapping
-from typing import Any
+from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mlx.core import array as Array
+
+from medmlx_core.typing import MlxRuntime
 from medmlx_core.upsample import deconv2x_ncdhw
 
 
 class ChannelLastGraph:
-    def __init__(self, weights: Mapping[str, Any], *, mx: Any) -> None:
+    def __init__(self, weights: Mapping[str, Array], *, mx: MlxRuntime) -> None:
         self.w = weights
         self.mx = mx
 
-    def conv(self, x: Any, name: str, *, padding: int = 0, stride: int = 1, groups: int = 1) -> Any:
+    def conv(
+        self, x: Array, name: str, *, padding: int = 0, stride: int = 1, groups: int = 1
+    ) -> Array:
         w = self.w[f"{name}.weight"]
         axes = (0, *range(2, w.ndim), 1)
         operation = self.mx.conv3d if w.ndim == 5 else self.mx.conv2d
-        y = operation(x, w.transpose(axes), stride=stride, padding=padding, groups=groups)
+        y = operation(x, self.mx.transpose(w, axes), stride=stride, padding=padding, groups=groups)
         bias = self.w.get(f"{name}.bias")
         return y if bias is None else y + bias
 
-    def linear(self, x: Any, name: str) -> Any:
+    def linear(self, x: Array, name: str) -> Array:
         y = x @ self.w[f"{name}.weight"].T
         bias = self.w.get(f"{name}.bias")
         return y if bias is None else y + bias
 
-    def layer_norm(self, x: Any, name: str | None = None) -> Any:
+    def layer_norm(self, x: Array, name: str | None = None) -> Array:
         weight = None if name is None else self.w[f"{name}.weight"]
         bias = None if name is None else self.w[f"{name}.bias"]
         return self.mx.fast.layer_norm(x, weight, bias, 1e-5)
 
-    def batch_norm(self, x: Any, name: str, *, eps: float = 1e-5) -> Any:
+    def batch_norm(self, x: Array, name: str, *, eps: float = 1e-5) -> Array:
         scale = self.w[f"{name}.weight"] * self.mx.rsqrt(self.w[f"{name}.running_var"] + eps)
         return (x - self.w[f"{name}.running_mean"]) * scale + self.w[f"{name}.bias"]
 
-    def relu(self, x: Any) -> Any:
+    def relu(self, x: Array) -> Array:
         return self.mx.maximum(x, 0)
 
-    def swish(self, x: Any) -> Any:
+    def swish(self, x: Array) -> Array:
         return x * self.mx.sigmoid(x)
 
-    def instance_norm(self, x: Any) -> Any:
+    def instance_norm(self, x: Array) -> Array:
         axes = tuple(range(1, x.ndim - 1))
         mean = self.mx.mean(x, axis=axes, keepdims=True)
         return (x - mean) * self.mx.rsqrt(self.mx.var(x, axis=axes, keepdims=True) + 1e-5)
 
-    def residual3d(self, x: Any, name: str) -> Any:
-        def activate(y: Any) -> Any:
+    def residual3d(self, x: Array, name: str) -> Array:
+        def activate(y: Array) -> Array:
             return self.mx.where(y >= 0, y, y * 0.01)
 
         y = activate(self.instance_norm(self.conv(x, f"{name}.conv1.conv", padding=1)))
@@ -54,13 +62,13 @@ class ChannelLastGraph:
             x = self.instance_norm(self.conv(x, f"{name}.conv3.conv"))
         return activate(y + x)
 
-    def deconv3d(self, x: Any, name: str) -> Any:
+    def deconv3d(self, x: Array, name: str) -> Array:
         result = deconv2x_ncdhw(
-            x.transpose(0, 4, 1, 2, 3), self.w[f"{name}.weight"], None, mx=self.mx
+            self.mx.transpose(x, (0, 4, 1, 2, 3)), self.w[f"{name}.weight"], None, mx=self.mx
         )
-        return result.transpose(0, 2, 3, 4, 1)
+        return self.mx.transpose(result, (0, 2, 3, 4, 1))
 
-    def bilinear2x(self, x: Any) -> Any:
+    def bilinear2x(self, x: Array) -> Array:
         """Source HoVer-Net uses align_corners=True at every 2x decoder stage."""
         mx = self.mx
         for axis in (1, 2):
@@ -71,11 +79,11 @@ class ChannelLastGraph:
             fraction = coordinate - low.astype(mx.float32)
             shape = [1] * x.ndim
             shape[axis] = size * 2
-            fraction = fraction.reshape(shape)
+            fraction = mx.reshape(fraction, shape)
             x = mx.take(x, low, axis=axis) * (1 - fraction) + mx.take(x, high, axis=axis) * fraction
         return x
 
-    def require_input(self, x: Any, shape: tuple[int, ...]) -> None:
+    def require_input(self, x: Array, shape: tuple[int, ...]) -> None:
         if x.ndim != len(shape) + 1 or tuple(x.shape[1:]) != shape or x.shape[0] < 1:
             raise ValueError(f"Expected Bx{'x'.join(map(str, shape))} input; got {x.shape}")
         if x.dtype != self.mx.float32:
