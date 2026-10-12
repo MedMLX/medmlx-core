@@ -11,6 +11,8 @@ models on Apple Silicon.
 [Releases](https://github.com/MedMLX/medmlx-core/releases) ·
 [Technical reference](https://github.com/MedMLX/medmlx-core/blob/main/docs/technical.md)
 
+[Install](#install) · [Python](#python) · [Technical details](#technical-details) · [License](#license)
+
 ## Requirements
 
 Apple Silicon Mac, macOS, Python 3.12 or 3.13, and Metal GPU access.
