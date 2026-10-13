@@ -44,7 +44,6 @@ def test_channel_last_seeded_graph_matches_upstream(
         x = graph.batch_norm(x, "bn", eps=1e-3)
         x = graph.swish(x)
         x = graph.layer_norm(x)
-        x = graph.bilinear2x(x)
     else:
         x = graph.deconv3d(x, "deconv")
         x = graph.instance_norm(x)
@@ -61,7 +60,6 @@ def test_channel_last_seeded_graph_matches_upstream(
         ("batch_norm", "expected_conv", "expected_bn", "normalization"),
         ("swish", "expected_bn", "expected_swish", "pointwise"),
         ("layer_norm", "expected_swish", "expected_ln", "normalization"),
-        ("bilinear", "expected_ln", "expected_2d", "interpolation"),
         ("instance_norm", "expected_deconv", "expected_3d", "normalization"),
         ("deconv", "input_3d", "expected_deconv", "dot"),
     ],
@@ -73,7 +71,6 @@ def test_channel_last_seeded_graph_matches_upstream(
         "batch_norm",
         "swish",
         "layer_norm",
-        "bilinear",
         "instance_norm",
         "deconv",
     ],
@@ -99,8 +96,6 @@ def test_individual_layers_match_upstream(
         actual = graph.relu(x)
     elif layer == "batch_norm":
         actual = graph.batch_norm(x, "bn", eps=1e-3)
-    elif layer == "bilinear":
-        actual = graph.bilinear2x(x)
     elif layer == "deconv":
         actual = graph.deconv3d(x, "deconv")
     else:

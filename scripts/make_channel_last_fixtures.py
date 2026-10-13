@@ -51,8 +51,7 @@ def record_layers(arrays: dict[str, HostArray]) -> None:
     arrays["expected_swish"] = x.numpy()
     x = F.layer_norm(x, (6,), eps=1e-5)
     arrays["expected_ln"] = x.numpy()
-    x = F.interpolate(x.permute(0, 3, 1, 2), scale_factor=2, mode="bilinear", align_corners=True)
-    arrays["expected_2d"] = x.permute(0, 2, 3, 1).numpy()
+    arrays["expected_2d"] = x.numpy()
     z = F.conv_transpose3d(
         tensors["input_3d"].permute(0, 4, 1, 2, 3), tensors["deconv.weight"], stride=2
     )

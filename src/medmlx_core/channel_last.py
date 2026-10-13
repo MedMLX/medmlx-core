@@ -68,21 +68,6 @@ class ChannelLastGraph:
         )
         return self.mx.transpose(result, (0, 2, 3, 4, 1))
 
-    def bilinear2x(self, x: Array) -> Array:
-        """Source HoVer-Net uses align_corners=True at every 2x decoder stage."""
-        mx = self.mx
-        for axis in (1, 2):
-            size = x.shape[axis]
-            coordinate = mx.arange(size * 2, dtype=mx.float32) * ((size - 1) / (size * 2 - 1))
-            low = mx.floor(coordinate).astype(mx.int32)
-            high = mx.minimum(low + 1, size - 1)
-            fraction = coordinate - low.astype(mx.float32)
-            shape = [1] * x.ndim
-            shape[axis] = size * 2
-            fraction = mx.reshape(fraction, shape)
-            x = mx.take(x, low, axis=axis) * (1 - fraction) + mx.take(x, high, axis=axis) * fraction
-        return x
-
     def require_input(self, x: Array, shape: tuple[int, ...]) -> None:
         if x.ndim != len(shape) + 1 or tuple(x.shape[1:]) != shape or x.shape[0] < 1:
             raise ValueError(f"Expected Bx{'x'.join(map(str, shape))} input; got {x.shape}")
