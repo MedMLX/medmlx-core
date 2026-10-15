@@ -12,7 +12,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/MONAI_LICENSE"]
 authors = [{ name = "Joseph Sandoval" }, { name = "Alfredo Sandoval Jr." }]
 dependencies = [
-  "mlx>=0.32.3,<0.33; platform_system == 'Darwin' and platform_machine == 'arm64'",
+  "mlx>=0.32.4,<0.33; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "numpy>=2.0,<3",
 ]
 

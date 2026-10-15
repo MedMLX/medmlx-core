@@ -30,7 +30,7 @@ __all__ = ["compute_importance_map", "dense_patch_slices", "sliding_window_infer
 def _tuple_rep[T: int | float | None](value: T | Sequence[T], dimensions: int) -> tuple[T, ...]:
     if np.isscalar(value) or value is None:
         return (cast(T, value),) * dimensions
-    result = tuple(cast(Sequence[T], value))
+    result = tuple(value)
     if len(result) != dimensions:
         raise ValueError(f"Expected {dimensions} values, got {len(result)}")
     return result
