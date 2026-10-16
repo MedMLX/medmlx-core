@@ -6,6 +6,7 @@ models on Apple Silicon.
 - Metal runtime checks and memory reporting
 - 3D convolutions, resampling and sliding-window inference
 - Tensor layouts, precision helpers and checkpoint conversion
+- Portable saved-graph inference and dense registration geometry
 
 [PyPI](https://pypi.org/project/medmlx-core/) ·
 [Releases](https://github.com/MedMLX/medmlx-core/releases) ·
@@ -54,6 +55,24 @@ predictor with your model; the result is a NumPy array.
 
 MedMLX model packages provide the architectures, weights and image workflows.
 This library supplies their shared runtime operations.
+
+Converted graphs run directly through core:
+
+```python
+from pathlib import Path
+import mlx.core as mx
+from medmlx_core.graph.runtime import Session
+
+session = Session.load(Path("build/my-native-lungmask"))
+log_probs, = session(mx.zeros((1, 1, 256, 256), dtype=mx.float32))
+```
+
+Graph schema 2, its codec and Metal executor are owned here. Source capture,
+ATen translation and source comparisons live in `medmlx-convert`. Inference
+does not require that converter, Torch, TensorFlow, Core ML or Core AI. Existing
+schema-1 pilot bundles must be regenerated; no legacy graph loader is retained.
+See the [graph and geometry contract](docs/graph-runtime.html) for the bounded
+operation coverage and numerical qualification scope.
 
 ## Technical details
 
