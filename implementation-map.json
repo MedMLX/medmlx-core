@@ -1,0 +1,367 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-16T20:01:28.640568+00:00",
+  "audit_context": {
+    "kind": "semantic_current_worktree_audit",
+    "runtime_execution_performed": false,
+    "interpretation": [
+      "Mappings describe inspected present source and retained documentation, not an exhaustive historical line diff.",
+      "Original behavior and revision claims are supported by the cited local source, documented upstream references, or retained comparisons; source_inspection is not a fresh independent upstream execution.",
+      "Repository Git revisions, checkpoint revisions, framework package versions and historical evaluated revisions are distinct identifiers.",
+      "Existing tests and result receipts establish only their documented inputs, revisions, backends and tolerances; they were not rerun here.",
+      "Preserved behavior is the identified implementation contract, not a new assertion of numerical or clinical equivalence.",
+      "Historical extraction prompts record plans; destination source and execution evidence determine implemented and verified outcomes.",
+      "Evidence paths resolve inside the current entry repository unless repository explicitly names a different entry; line endpoints are inclusive."
+    ]
+  },
+  "repository": {
+    "name": "medmlx-core",
+    "role": "shared_runtime",
+    "summary": "Shared runtime and numerical primitives used by model ports; combines newly added Metal admission/checkpoint contracts with Torch/MONAI-compatible array, convolution, resampling and sliding-window helpers. It is not a standalone model port.",
+    "upstream_sources": [
+      {
+        "name": "MONAI numerical/algorithm reference",
+        "framework": "PyTorch",
+        "url": "https://github.com/Project-MONAI/MONAI/tree/eccefc57550b111ed781d82249dfe77872a0e918",
+        "revision": "eccefc57550b111ed781d82249dfe77872a0e918",
+        "revision_basis": "Documented MONAI 1.6.0 canonical reference pin.",
+        "evidence": [
+          {
+            "path": "docs/technical.md",
+            "start_line": 24,
+            "end_line": 28
+          }
+        ]
+      },
+      {
+        "name": "PyTorch functional numerical reference",
+        "framework": "PyTorch",
+        "url": "https://github.com/pytorch/pytorch/tree/5c4886908584029761b579af026dcfb627c84070",
+        "revision": "5c4886908584029761b579af026dcfb627c84070",
+        "revision_basis": "Documented PyTorch 2.14.1 canonical reference pin.",
+        "evidence": [
+          {
+            "path": "docs/technical.md",
+            "start_line": 24,
+            "end_line": 28
+          }
+        ]
+      }
+    ],
+    "changes": [
+      {
+        "category": "runtime_added",
+        "original_behavior": "Individual upstream models/frameworks can have CPU/CUDA device selection; this package itself has no single upstream model origin.",
+        "mlx_behavior": "Centralize Darwin-arm64 admission, supported MLX version checks, Metal availability, explicit GPU selection and memory reporting; unsupported hosts or unavailable Metal fail explicitly.",
+        "rationale": "Give independently packaged native models one explicit runtime contract.",
+        "upstream_symbols": [],
+        "local_symbols": [
+          "probe_mlx_runtime",
+          "require_mlx_runtime",
+          "require_mlx_device",
+          "import_mlx"
+        ],
+        "evidence": [
+          {
+            "path": "src/medmlx_core/runtime.py",
+            "start_line": 50,
+            "end_line": 141
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 3,
+            "end_line": 15
+          }
+        ],
+        "evidence_basis": "source_and_documentation",
+        "id": "medmlx-core:01"
+      },
+      {
+        "category": "checkpoint_boundary_added",
+        "original_behavior": "Torch checkpoints require Torch deserialization and may contain nested tensor payloads.",
+        "mlx_behavior": "Provide optional conversion-only Torch loading with weights_only=True by default, explicit trusted legacy opt-out, duplicate-safe host mappings and structured missing-extra errors.",
+        "rationale": "Keep runtime inference independent from reference/deserialization frameworks.",
+        "upstream_symbols": [
+          "torch.load"
+        ],
+        "local_symbols": [
+          "load_torch_checkpoint",
+          "tensor_mapping_from_payload"
+        ],
+        "evidence": [
+          {
+            "path": "docs/technical.md",
+            "start_line": 12,
+            "end_line": 15
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 19,
+            "end_line": 22
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 32,
+            "end_line": 35
+          }
+        ],
+        "evidence_basis": "documented",
+        "id": "medmlx-core:02"
+      },
+      {
+        "category": "layout_translation",
+        "original_behavior": "Torch volumetric public tensors use NCDHW and convolution weights OI-K or IO-K; MLX convolutions consume channel-last arrays and output-first/channel-last kernels.",
+        "mlx_behavior": "Centralize NCDHW<->NDHWC, convolution and transpose-convolution weight permutations, and volume-token reshaping; keep model-specific topology/label semantics outside core.",
+        "rationale": null,
+        "upstream_symbols": [
+          "Torch Conv3d",
+          "Torch ConvTranspose3d"
+        ],
+        "local_symbols": [
+          "to_ndhwc",
+          "to_ncdhw",
+          "conv3d_weight_to_mlx",
+          "conv_transpose3d_weight_to_mlx",
+          "tokens_from_ncdhw"
+        ],
+        "evidence": [
+          {
+            "path": "src/medmlx_core/layout.py",
+            "start_line": 38,
+            "end_line": 81
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 43,
+            "end_line": 45
+          }
+        ],
+        "evidence_basis": "source_and_documentation",
+        "id": "medmlx-core:03"
+      },
+      {
+        "category": "normalization_and_ops",
+        "original_behavior": "Torch functional operations define GroupNorm, convolutions, pooling, interpolation and padding used by consumers.",
+        "mlx_behavior": "Implement shared MLX ops; GroupNorm reshapes each group into a layer_norm reduction then restores channel order and affine terms; expose source-facing NCDHW signatures around channel-last convolution.",
+        "rationale": null,
+        "upstream_symbols": [
+          "torch.nn.functional.group_norm",
+          "torch.nn.functional.conv3d"
+        ],
+        "local_symbols": [
+          "group_norm_ncdhw",
+          "conv3d_ncdhw",
+          "ops"
+        ],
+        "evidence": [
+          {
+            "path": "src/medmlx_core/ops.py",
+            "start_line": 45,
+            "end_line": 95
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 35,
+            "end_line": 41
+          }
+        ],
+        "evidence_basis": "source_and_documentation",
+        "id": "medmlx-core:04"
+      },
+      {
+        "category": "maisi_split_convolution",
+        "original_behavior": "MONAI MaisiConvolution splits spatial work with overlap, crop and integer size-ratio rules.",
+        "mlx_behavior": "Reimplement split forward/transposed 3D convolution around shared MLX ops, retaining source split axis and crop semantics rather than changing model topology.",
+        "rationale": null,
+        "upstream_symbols": [
+          "MONAI MaisiConvolution"
+        ],
+        "local_symbols": [
+          "split_conv3d_ncdhw",
+          "split_conv_transpose3d_ncdhw",
+          "_split_convolution_ncdhw"
+        ],
+        "evidence": [
+          {
+            "path": "src/medmlx_core/ops.py",
+            "start_line": 133,
+            "end_line": 186
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 36,
+            "end_line": 37
+          }
+        ],
+        "evidence_basis": "source_and_documentation",
+        "id": "medmlx-core:05"
+      },
+      {
+        "category": "transpose_convolution_repair",
+        "original_behavior": "Torch kernel-2/stride-2 transposed convolution defines decoder output; native MLX 0.32.3 lazy decoder consumers were documented to corrupt large outputs.",
+        "mlx_behavior": "Dispatch FP32 zero-padding/output-padding kernel-2/stride-2 cases to deconv2x_ncdhw: compute eight matrix-product phases and interleave output. Retain native MLX for other geometry/dtypes without inserting graph evaluation boundaries.",
+        "rationale": "Repair a documented lazy-consumer numerical defect while preserving the operator contract.",
+        "upstream_symbols": [
+          "torch.nn.functional.conv_transpose3d",
+          "MLX conv_transpose3d"
+        ],
+        "local_symbols": [
+          "conv_transpose3d_ncdhw",
+          "deconv2x_ncdhw"
+        ],
+        "evidence": [
+          {
+            "path": "src/medmlx_core/ops.py",
+            "start_line": 98,
+            "end_line": 130
+          },
+          {
+            "path": "src/medmlx_core/upsample.py",
+            "start_line": 110,
+            "end_line": 150
+          },
+          {
+            "path": "docs/transpose-convolution.md",
+            "start_line": 3,
+            "end_line": 34
+          }
+        ],
+        "evidence_basis": "source_and_documentation",
+        "id": "medmlx-core:06"
+      },
+      {
+        "category": "sliding_window_reimplementation",
+        "original_behavior": "MONAI sliding_window_inference defines window stride, padding, Gaussian weights, batching, coordinates and output crop semantics.",
+        "mlx_behavior": "Run predictor windows on Metal while accumulating in ordered host NumPy arrays; retain source stride/edge shift/symmetric padding and weighted dtype behavior. Reject CPU prediction and unsupported scaled/multiple outputs, buffering, process_fn and MetaTensor paths.",
+        "rationale": "Separate model execution from the host output stitcher; explicit unsupported contracts prevent silent degradation.",
+        "upstream_symbols": [
+          "MONAI inferers/utils.py sliding_window_inference",
+          "MONAI data/utils.py"
+        ],
+        "local_symbols": [
+          "sliding_window_inference",
+          "dense_patch_slices",
+          "compute_importance_map"
+        ],
+        "evidence": [
+          {
+            "path": "docs/technical.md",
+            "start_line": 50,
+            "end_line": 85
+          }
+        ],
+        "evidence_basis": "documented",
+        "id": "medmlx-core:07"
+      },
+      {
+        "category": "reusable_channel_last_graph",
+        "original_behavior": "Torch/MONAI graph layers include linear, affine norms, batch norms, residual blocks and deconvolution.",
+        "mlx_behavior": "Supply a shared ChannelLastGraph and fused upsample-plus-skip helpers, with independent source-layer and complete seeded graph comparisons; leave model checkpoint keys and image workflow ownership to consumers.",
+        "rationale": null,
+        "upstream_symbols": [
+          "Torch layers",
+          "MONAI Swish",
+          "MONAI UnetResBlock"
+        ],
+        "local_symbols": [
+          "ChannelLastGraph",
+          "upsample_add_ncdhw"
+        ],
+        "evidence": [
+          {
+            "path": "src/medmlx_core/channel_last.py",
+            "start_line": 15,
+            "end_line": 69
+          },
+          {
+            "path": "src/medmlx_core/upsample.py",
+            "start_line": 84,
+            "end_line": 110
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 38,
+            "end_line": 45
+          }
+        ],
+        "evidence_basis": "source_and_documentation",
+        "id": "medmlx-core:08"
+      },
+      {
+        "category": "numerical_reference_contract",
+        "original_behavior": "Source CPU FP32 and Metal FP32 differ in reduction/FMA/exponential rounding even for equivalent helper formulas.",
+        "mlx_behavior": "Version operation-specific numerical budgets, exact-copy/discrete contracts and independent source-generated fixture archives; isolate layer-stage comparisons from cumulative full-graph budgets.",
+        "rationale": "Helper qualification must not be promoted to released-model or clinical equivalence.",
+        "upstream_symbols": [
+          "PyTorch functional oracle",
+          "MONAI helper oracle"
+        ],
+        "local_symbols": [
+          "tests/reference_spec.json",
+          "tests/numerical_contract.json",
+          "numerical helper fixtures"
+        ],
+        "evidence": [
+          {
+            "path": "docs/technical.md",
+            "start_line": 87,
+            "end_line": 100
+          },
+          {
+            "path": "docs/technical.md",
+            "start_line": 120,
+            "end_line": 137
+          }
+        ],
+        "evidence_basis": "documented",
+        "id": "medmlx-core:09"
+      }
+    ],
+    "preserved_behavior": [
+      "Source-facing NCDHW shapes, Torch convolution layouts, MONAI split/window semantics and predictor-channel ordering are explicit shared contracts.",
+      "Model topology, checkpoint names, labels, geometry and pre/postprocessing remain owned by model packages."
+    ],
+    "verification": {
+      "status": "existing_evidence_reviewed_not_rerun",
+      "evidence": [
+        {
+          "path": "docs/technical.md",
+          "start_line": 87,
+          "end_line": 100
+        },
+        {
+          "path": "docs/technical.md",
+          "start_line": 120,
+          "end_line": 144
+        },
+        {
+          "path": "docs/transpose-convolution.md",
+          "start_line": 9,
+          "end_line": 34
+        }
+      ],
+      "findings": [
+        "Docs record seven independent small helper archives and a v0.1.2 wheel run passing 219 tagged tests on Metal.",
+        "Transpose-convolution note includes a checkpoint-free reproducer and separates measured corruption from inferred upstream cause.",
+        "Technical docs retain historical Ruff/Pyright backlog; no current lint/typecheck status is inferred.",
+        "git status reported clean at inspection."
+      ],
+      "limits": [
+        "No helper tests, reproducer, lint, typecheck or performance probes were run for this inventory.",
+        "Helper fixtures do not qualify consumer checkpoints, full-volume performance, clinical accuracy or models using other MONAI revisions."
+      ]
+    },
+    "unresolved": [
+      "No single Torch-to-MLX model history applies to this shared library; mappings distinguish added contracts from algorithm ports.",
+      "Historical static-analysis counts in docs may be stale and were not refreshed."
+    ],
+    "snapshot": {
+      "repository_url": "https://github.com/MedMLX/medmlx-core",
+      "origin_url": "https://github.com/MedMLX/medmlx-core.git",
+      "head_commit": "0a83421597991ad04c76a532780273c13854cbac",
+      "branch": "main",
+      "working_tree_changes": []
+    },
+    "configurations": []
+  }
+}

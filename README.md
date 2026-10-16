@@ -67,3 +67,7 @@ for the Metal transpose-convolution fix.
 [Apache-2.0](https://github.com/MedMLX/medmlx-core/blob/main/LICENSE).
 Includes [third-party notices](https://github.com/MedMLX/medmlx-core/blob/main/THIRD_PARTY_NOTICES.md)
 and the upstream MONAI license.
+
+## Implementation mapping
+
+[implementation-map.json](implementation-map.json) records upstream-to-native changes, source references and qualification scope.
